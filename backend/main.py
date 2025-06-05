@@ -155,6 +155,10 @@ class VRClient:
                                     logger.info("Exit requested by user")
                                     break
 
+                        timing = data.get('server_timing', {})
+                        if timing:
+                            print(timing)
+
                 except json.JSONDecodeError:
                     logger.warning("Received invalid JSON data")
                 except Exception as e:
@@ -196,7 +200,7 @@ class VRClient:
 
 def main():
     # Configuration - Update this with your Raspberry Pi's IP address
-    PI_SERVER_HOST = '192.168.113.209'  # Replace with your Pi's IP
+    PI_SERVER_HOST = '192.168.1.26'  # Replace with your Pi's IP
     PI_SERVER_PORT = 8765
 
     print("VR Camera Client Test Application")
