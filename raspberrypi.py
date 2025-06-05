@@ -491,7 +491,8 @@ def main():
     SERVER_HOST = '0.0.0.0'  # Listen on all interfaces
     SERVER_PORT = 8765
     IMAGE_QUALITY = 85  # JPEG quality (1-100)
-    IMAGE_SIZE = (640, 480)  # Adjust based on VR glasses capability
+    # IMAGE_SIZE = (640, 480)  # Adjust based on VR glasses capability
+    IMAGE_SIZE = (3200, 1080)  # Adjust based on VR glasses capability
 
     logger.info("Starting Raspberry Pi Camera Server with detailed timing...")
     startup_time = time.time()
