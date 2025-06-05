@@ -47,6 +47,8 @@ class ServoControl:
         self.current_tilt = self.servo_center
         self.current_roll = self.servo_center
 
+        min_pulse_width = 1.0/1000
+        max_pulse_width = 2.0/1000
         # Initialize servos
         self.servos_initialized = False
         # try:
@@ -54,24 +56,24 @@ class ServoControl:
             self.pan_pin,
             min_angle=self.servo_yaw_min,
             max_angle=self.servo_yaw_max,
-            min_pulse_width=0.5/1000,
-            max_pulse_width=2.5/1000,
+            min_pulse_width=min_pulse_width,
+            max_pulse_width=max_pulse_width,
             initial_angle=self.servo_center
         )
         self.tilt_servo = AngularServo(
             self.tilt_pin,
             min_angle=self.servo_pitch_min,
             max_angle=self.servo_pitch_max,
-            min_pulse_width=0.5/1000,
-            max_pulse_width=2.5/1000,
+            min_pulse_width=min_pulse_width,
+            max_pulse_width=max_pulse_width,
             initial_angle=self.servo_center
         )
         self.roll_servo = AngularServo(
             self.roll_pin,
             min_angle=self.servo_roll_min,
             max_angle=self.servo_roll_max,
-            min_pulse_width=0.5/1000,
-            max_pulse_width=2.5/1000,
+            min_pulse_width=min_pulse_width,
+            max_pulse_width=max_pulse_width,
             initial_angle=self.servo_center
         )
         # Move to center position
