@@ -2,7 +2,7 @@
 """
 VR Client Test Application
 Connects to the Raspberry Pi camera server and displays received images
-Simulates head tilt angle transmission for testing
+Simulates head tilt angle transmission for testing with keyboard control
 """
 
 import asyncio
@@ -29,6 +29,18 @@ class VRClient:
         self.is_running = False
         self.frame_count = 0
         self.last_fps_time = time.time()
+
+        # Manual control angles
+        self.manual_pitch = 0.0
+        self.manual_yaw = 0.0
+        self.manual_roll = 0.0
+        self.manual_control = True
+
+        # Angle limits (from center position)
+        self.max_pitch_up = 90.0    # Max up
+        self.max_pitch_down = -75.0 # Max down
+        self.max_yaw = 70.0         # ±70° (140° field of view)
+        self.max_roll = 70.0        # ±70° roll
 
     async def connect_to_server(self):
         """Connect to the Raspberry Pi camera server"""
@@ -71,11 +83,61 @@ class VRClient:
 
         return pitch, yaw, roll
 
+    def handle_keyboard_input(self, key):
+        """Handle keyboard input for manual angle control"""
+        angle_step = 5.0
+
+        if key == ord('m'):  # Toggle manual control
+            self.manual_control = not self.manual_control
+            mode = "Manual" if self.manual_control else "Automatic"
+            logger.info(f"Switched to {mode} control mode")
+
+        elif self.manual_control:
+            # Arrow keys for pitch and yaw
+            if key == 82 or key == 0:  # Up arrow - pitch up (positive)
+                self.manual_pitch = min(self.max_pitch_up, self.manual_pitch + angle_step)
+                logger.info(f"Pitch: {self.manual_pitch:.1f}°")
+
+            elif key == 84 or key == 1:  # Down arrow - pitch down (negative)
+                self.manual_pitch = max(self.max_pitch_down, self.manual_pitch - angle_step)
+                logger.info(f"Pitch: {self.manual_pitch:.1f}°")
+
+            elif key == 81 or key == 2:  # Left arrow - yaw left (negative)
+                self.manual_yaw = max(-self.max_yaw, self.manual_yaw - angle_step)
+                logger.info(f"Yaw: {self.manual_yaw:.1f}°")
+
+            elif key == 83 or key == 3:  # Right arrow - yaw right (positive)
+                self.manual_yaw = min(self.max_yaw, self.manual_yaw + angle_step)
+                logger.info(f"Yaw: {self.manual_yaw:.1f}°")
+
+            # < and > for roll
+            elif key == ord(',') or key == ord('<'):  # < key - roll left (negative)
+                self.manual_roll = max(-self.max_roll, self.manual_roll - angle_step)
+                logger.info(f"Roll: {self.manual_roll:.1f}°")
+
+            elif key == ord('.') or key == ord('>'):  # > key - roll right (positive)
+                self.manual_roll = min(self.max_roll, self.manual_roll + angle_step)
+                logger.info(f"Roll: {self.manual_roll:.1f}°")
+
+            # Reset angles
+            elif key == ord('r'):
+                self.manual_pitch = 0.0
+                self.manual_yaw = 0.0
+                self.manual_roll = 0.0
+                logger.info("Angles reset to 0°")
+
+    def get_current_angles(self):
+        """Get current angles based on control mode"""
+        if self.manual_control:
+            return self.manual_pitch, self.manual_yaw, self.manual_roll
+        else:
+            return self.simulate_head_movement()
+
     async def send_head_angles(self):
-        """Send simulated head angles to the server"""
+        """Send head angles to the server"""
         while self.is_running and self.websocket:
             try:
-                pitch, yaw, roll = self.simulate_head_movement()
+                pitch, yaw, roll = self.get_current_angles()
 
                 message = {
                     'type': 'head_angles',
@@ -123,6 +185,33 @@ class VRClient:
         cv2.putText(frame, status_text, (10, frame.shape[0] - 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
+        # Add control mode and angles
+        mode_text = "Manual" if self.manual_control else "Auto"
+        pitch, yaw, roll = self.get_current_angles()
+
+        cv2.putText(frame, f"Mode: {mode_text}", (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+
+        cv2.putText(frame, f"P:{pitch:.1f}° Y:{yaw:.1f}° R:{roll:.1f}°", (10, 90),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+
+        # Add controls help
+        help_y = frame.shape[0] - 140
+        help_texts = [
+            "Controls:",
+            "M - Toggle Manual/Auto",
+            "↑ - Pitch up (+90° max)",
+            "↓ - Pitch down (-75° max)",
+            "← → - Yaw ±70° (140° FOV)",
+            "< > - Roll ±70°",
+            "R - Reset to center (0°)",
+            "Q/ESC - Quit"
+        ]
+
+        for i, help_text in enumerate(help_texts):
+            cv2.putText(frame, help_text, (10, help_y + i * 15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+
         return frame
 
     async def receive_frames(self):
@@ -149,11 +238,15 @@ class VRClient:
                                 # Display the frame
                                 cv2.imshow('VR Camera Feed', frame)
 
-                                # Check for exit key
+                                # Check for keyboard input
                                 key = cv2.waitKey(1) & 0xFF
+
+                                # Handle special keys
                                 if key == ord('q') or key == 27:  # 'q' or ESC
                                     logger.info("Exit requested by user")
                                     break
+                                elif key != 255:  # Key was pressed
+                                    self.handle_keyboard_input(key)
 
                         timing = data.get('server_timing', {})
                         if timing:
@@ -206,7 +299,15 @@ def main():
     print("VR Camera Client Test Application")
     print("=" * 40)
     print(f"Connecting to: {PI_SERVER_HOST}:{PI_SERVER_PORT}")
-    print("Press 'q' or ESC in the video window to quit")
+    print("\nControls:")
+    print("- M: Toggle Manual/Automatic control")
+    print("- Arrow Keys:")
+    print("  ↑: Pitch up (max +90°)")
+    print("  ↓: Pitch down (max -75°)")
+    print("  ←→: Yaw left/right (±70°, total 140° FOV)")
+    print("- < >: Roll left/right (±70°)")
+    print("- R: Reset all angles to center (0°)")
+    print("- Q/ESC: Quit application")
     print("=" * 40)
 
     # Create and run client

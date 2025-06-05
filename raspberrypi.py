@@ -154,10 +154,10 @@ class CameraServer:
                         client_timestamp = data.get('timestamp')
                         if client_timestamp:
                             network_latency = (message_received_time - client_timestamp) * 1000
-                            logger.info(f"Head angles - Pitch: {pitch:.2f}, Yaw: {yaw:.2f}, Roll: {roll:.2f} "
+                            logger.error(f"Head angles - Pitch: {pitch:.2f}, Yaw: {yaw:.2f}, Roll: {roll:.2f} "
                                         f"(Network latency: {network_latency:.2f}ms, Parse: {parse_time:.2f}ms)")
                         else:
-                            logger.info(f"Head angles - Pitch: {pitch:.2f}, Yaw: {yaw:.2f}, Roll: {roll:.2f}")
+                            logger.error(f"Head angles - Pitch: {pitch:.2f}, Yaw: {yaw:.2f}, Roll: {roll:.2f}")
 
                         #TODO (28.05.2025): Integracja z Servo
                         # Here you would integrate with your servo control code
