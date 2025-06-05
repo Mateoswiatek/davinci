@@ -11,6 +11,8 @@ import json
 import base64
 import io
 import time
+
+from gpiozero import AngularServo
 from picamera2 import Picamera2
 from PIL import Image
 import logging
@@ -18,6 +20,181 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class ServoControl:
+    def __init__(self, pan_pin=14, tilt_pin=23, roll_pin=18):
+        """Initialize servo control with VR client angle ranges"""
+        self.pan_pin = pan_pin
+        self.tilt_pin = tilt_pin
+        self.roll_pin = roll_pin
+
+        # VR Client angle ranges (centered at 0°)
+        self.max_pitch = 75.0   # ±75° pitch
+        self.max_yaw = 70.0     # ±70° yaw
+        self.max_roll = 70.0    # ±70° roll
+
+        # Servo physical limits (degrees)
+        self.servo_pitch_min = 15
+        self.servo_pitch_max = 165
+        self.servo_yaw_min = 20
+        self.servo_yaw_max = 160
+        self.servo_roll_min = 20
+        self.servo_roll_max = 160
+
+        # Current servo positions (start at center)
+        self.servo_center = 90
+        self.current_pan = self.servo_center
+        self.current_tilt = self.servo_center
+        self.current_roll = self.servo_center
+
+        # Initialize servos
+        self.servos_initialized = False
+        # try:
+        self.pan_servo = AngularServo(
+            self.pan_pin,
+            min_angle=self.servo_yaw_min,
+            max_angle=self.servo_yaw_max,
+            min_pulse_width=0.5/1000,
+            max_pulse_width=2.5/1000,
+            initial_angle=self.servo_center
+        )
+        self.tilt_servo = AngularServo(
+            self.tilt_pin,
+            min_angle=self.servo_pitch_min,
+            max_angle=self.servo_pitch_max,
+            min_pulse_width=0.5/1000,
+            max_pulse_width=2.5/1000,
+            initial_angle=self.servo_center
+        )
+        self.roll_servo = AngularServo(
+            self.roll_pin,
+            min_angle=self.servo_roll_min,
+            max_angle=self.servo_roll_max,
+            min_pulse_width=0.5/1000,
+            max_pulse_width=2.5/1000,
+            initial_angle=self.servo_center
+        )
+        # Move to center position
+        self.move_to_center()
+        self.servos_initialized = True
+        logger.info("Servos initialized successfully")
+
+        # except Exception as e:
+        #     logger.error(f"Failed to initialize servos: {e}")
+        #     self.servos_initialized = False
+
+    def vr_to_servo_angle(self, vr_angle, axis):
+        """Convert VR client angles to servo angles with proper clamping"""
+        if axis == 'pitch':
+            # Clamp VR angle to valid range
+            vr_angle = max(-self.max_pitch, min(self.max_pitch, vr_angle))
+            # Map VR -75° to +75° -> Servo 15° to 165°
+            servo_range = self.servo_pitch_max - self.servo_pitch_min
+            normalized = (vr_angle + self.max_pitch) / (2 * self.max_pitch)
+            servo_angle = self.servo_pitch_min + (normalized * servo_range)
+
+        elif axis == 'yaw':
+            # Clamp VR angle to valid range
+            vr_angle = max(-self.max_yaw, min(self.max_yaw, vr_angle))
+            # Map VR -70° to +70° -> Servo 20° to 160°
+            servo_range = self.servo_yaw_max - self.servo_yaw_min
+            normalized = (vr_angle + self.max_yaw) / (2 * self.max_yaw)
+            servo_angle = self.servo_yaw_min + (normalized * servo_range)
+
+        elif axis == 'roll':
+            # Clamp VR angle to valid range
+            vr_angle = max(-self.max_roll, min(self.max_roll, vr_angle))
+            # Map VR -70° to +70° -> Servo 20° to 160°
+            servo_range = self.servo_roll_max - self.servo_roll_min
+            normalized = (vr_angle + self.max_roll) / (2 * self.max_roll)
+            servo_angle = self.servo_roll_min + (normalized * servo_range)
+
+        else:
+            servo_angle = self.servo_center
+
+        return servo_angle
+
+    def move_to_center(self):
+        """Move all servos to center position"""
+        if not self.servos_initialized:
+            return False
+
+        try:
+            # Calculate center positions based on ranges
+            pitch_center = (self.servo_pitch_min + self.servo_pitch_max) / 2
+            yaw_center = (self.servo_yaw_min + self.servo_yaw_max) / 2
+            roll_center = (self.servo_roll_min + self.servo_roll_max) / 2
+
+            self.current_pan = yaw_center
+            self.current_tilt = pitch_center
+            self.current_roll = roll_center
+
+            self.pan_servo.angle = self.current_pan
+            self.tilt_servo.angle = self.current_tilt
+            self.roll_servo.angle = self.current_roll
+
+            logger.info(f"Servos moved to center - Pan: {yaw_center}°, Tilt: {pitch_center}°, Roll: {roll_center}°")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error moving servos to center: {e}")
+            return False
+
+    def update_servo_positions(self, pitch, yaw, roll):
+        """Update servo positions based on VR client angles"""
+        if not self.servos_initialized:
+            logger.warning("Servos not initialized, cannot update positions")
+            return False
+
+        try:
+            # Convert VR angles to servo angles (includes clamping)
+            pan_angle = self.vr_to_servo_angle(yaw, 'yaw')
+            tilt_angle = self.vr_to_servo_angle(pitch, 'pitch')
+            roll_angle = self.vr_to_servo_angle(roll, 'roll')
+
+            # Update servo positions
+            self.current_pan = pan_angle
+            self.current_tilt = tilt_angle
+            self.current_roll = roll_angle
+
+            self.pan_servo.angle = pan_angle
+            self.tilt_servo.angle = tilt_angle
+            self.roll_servo.angle = roll_angle
+
+            logger.info(f"Servos updated - VR(P:{pitch:.1f}°, Y:{yaw:.1f}°, R:{roll:.1f}°) "
+                        f"-> Servo(P:{tilt_angle:.1f}°, Y:{pan_angle:.1f}°, R:{roll_angle:.1f}°)")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error updating servo positions: {e}")
+            return False
+
+    def get_current_positions(self):
+        """Get current servo positions"""
+        return {
+            'pan': self.current_pan,
+            'tilt': self.current_tilt,
+            'roll': self.current_roll,
+            'initialized': self.servos_initialized
+        }
+
+    def cleanup(self):
+        """Clean up servo resources"""
+        if self.servos_initialized:
+            try:
+                self.move_to_center()
+                time.sleep(0.5)
+
+                self.pan_servo.close()
+                self.tilt_servo.close()
+                self.roll_servo.close()
+
+                logger.info("Servos cleaned up successfully")
+
+            except Exception as e:
+                logger.error(f"Error during servo cleanup: {e}")
+
 
 class CameraServer:
     def __init__(self, host='0.0.0.0', port=8765, image_quality=85, image_size=(640, 480)):
@@ -35,6 +212,9 @@ class CameraServer:
             'send_times': [],
             'total_times': []
         }
+
+        # Initialize servo control
+        self.servo_control = ServoControl()
 
     def initialize_camera(self):
         """Initialize the Pi Camera"""
@@ -144,20 +324,19 @@ class CameraServer:
                     data = json.loads(message)
                     parse_time = (time.time() - parse_start) * 1000
 
+
                     if data.get('type') == 'head_angles':
-                        # Handle head tilt angles from VR glasses
+                        # Handle head angles from VR glasses
                         pitch = data.get('pitch', 0)
                         yaw = data.get('yaw', 0)
                         roll = data.get('roll', 0)
 
-                        # Check if client sent timestamp
-                        client_timestamp = data.get('timestamp')
-                        if client_timestamp:
-                            network_latency = (message_received_time - client_timestamp) * 1000
-                            logger.error(f"Head angles - Pitch: {pitch:.2f}, Yaw: {yaw:.2f}, Roll: {roll:.2f} "
-                                        f"(Network latency: {network_latency:.2f}ms, Parse: {parse_time:.2f}ms)")
-                        else:
-                            logger.error(f"Head angles - Pitch: {pitch:.2f}, Yaw: {yaw:.2f}, Roll: {roll:.2f}")
+                        logger.info(f"Head angles - Pitch: {pitch:.2f}°, Yaw: {yaw:.2f}°, Roll: {roll:.2f}°")
+
+                        # Update servo positions
+                        success = self.servo_control.update_servo_positions(pitch, yaw, roll)
+                        if not success:
+                            logger.warning("Failed to update servo positions")
 
                         #TODO (28.05.2025): Integracja z Servo
                         # Here you would integrate with your servo control code
