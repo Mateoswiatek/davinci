@@ -3,6 +3,7 @@
 Raspberry Pi Camera Server for VR Project
 Captures camera images and streams them via WebSocket to VR glasses
 Also receives head tilt angles for servo control
+Supports stereo mode - splits image vertically for left/right eye
 """
 
 import asyncio
@@ -20,17 +21,19 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class CameraServer:
-    def __init__(self, host='0.0.0.0', port=8765, image_quality=85, image_size=(640, 480)):
+    def __init__(self, host='0.0.0.0', port=8765, image_quality=85, image_size=(640, 480), stereo_mode=True):
         self.host = host
         self.port = port
         self.image_quality = image_quality
         self.image_size = image_size
+        self.stereo_mode = stereo_mode  # Switch for stereo/mono mode
         self.picam2 = None
         self.connected_clients = set()
         self.is_running = False
         self.frame_counter = 0
         self.latency_stats = {
             'capture_times': [],
+            'split_times': [],  # New timing for image splitting
             'encode_times': [],
             'send_times': [],
             'total_times': []
@@ -47,14 +50,58 @@ class CameraServer:
             self.picam2.configure(config)
             self.picam2.start()
             init_time = (time.time() - init_start) * 1000
-            logger.info(f"Camera initialized with resolution {self.image_size} in {init_time:.2f}ms")
+            mode_text = "STEREO" if self.stereo_mode else "MONO"
+            logger.info(f"Camera initialized with resolution {self.image_size} in {init_time:.2f}ms [{mode_text} MODE]")
             return True
         except Exception as e:
             logger.error(f"Failed to initialize camera: {e}")
             return False
 
+    def split_image_vertically(self, image):
+        """Split image vertically into left and right parts"""
+        split_start = time.time()
+
+        width, height = image.size
+        mid_x = width // 2
+
+        # Left half (0 to mid_x)
+        left_image = image.crop((0, 0, mid_x, height))
+
+        # Right half (mid_x to width)
+        right_image = image.crop((mid_x, 0, width, height))
+
+        split_time = (time.time() - split_start) * 1000
+
+        return left_image, right_image, split_time
+
+    def encode_image_to_base64(self, image, timing_key=None):
+        """Encode single image to base64 JPEG"""
+        encode_start = time.time()
+
+        # JPEG compression
+        compress_start = time.time()
+        buffer = io.BytesIO()
+        image.save(buffer, format='JPEG', quality=self.image_quality)
+        buffer.seek(0)
+        compress_end = time.time()
+
+        # Base64 encoding
+        b64_start = time.time()
+        image_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        b64_end = time.time()
+
+        encode_time = (time.time() - encode_start) * 1000
+
+        timing = {
+            'compression_ms': (compress_end - compress_start) * 1000,
+            'base64_ms': (b64_end - b64_start) * 1000,
+            'total_encode_ms': encode_time
+        }
+
+        return image_data, timing
+
     def capture_frame(self):
-        """Capture a frame from the camera and return as base64 encoded JPEG with timing info"""
+        """Capture a frame from the camera and return as base64 encoded JPEG(s) with timing info"""
         frame_start_time = time.time()
         timing = {}
 
@@ -69,26 +116,45 @@ class CameraServer:
             image = Image.fromarray(frame)
             pil_end = time.time()
 
-            # Timestamp: Start JPEG compression
-            compress_start = time.time()
-            buffer = io.BytesIO()
-            image.save(buffer, format='JPEG', quality=self.image_quality)
-            buffer.seek(0)
-            compress_end = time.time()
+            timing['capture_ms'] = (capture_end - capture_start) * 1000
+            timing['pil_conversion_ms'] = (pil_end - pil_start) * 1000
 
-            # Timestamp: Start base64 encoding
-            encode_start = time.time()
-            image_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
-            encode_end = time.time()
+            # SWITCH: Early split (right after acquisition)
+            if self.stereo_mode:
+                # Split image into left and right parts
+                left_image, right_image, split_time = self.split_image_vertically(image)
+                timing['split_ms'] = split_time
+
+                # Encode both images
+                left_data, left_timing = self.encode_image_to_base64(left_image)
+                right_data, right_timing = self.encode_image_to_base64(right_image)
+
+                # Combine timing info
+                timing['left_compression_ms'] = left_timing['compression_ms']
+                timing['left_base64_ms'] = left_timing['base64_ms']
+                timing['right_compression_ms'] = right_timing['compression_ms']
+                timing['right_base64_ms'] = right_timing['base64_ms']
+                timing['total_encode_ms'] = left_timing['total_encode_ms'] + right_timing['total_encode_ms']
+
+                image_data = {
+                    'left': left_data,
+                    'right': right_data
+                }
+
+            else:
+                # Mono mode - encode single image
+                single_data, single_timing = self.encode_image_to_base64(image)
+                timing.update(single_timing)
+                timing['split_ms'] = 0  # No splitting in mono mode
+
+                image_data = {
+                    'mono': single_data
+                }
 
             # Total processing time
             total_time = (time.time() - frame_start_time) * 1000
-
-            timing['capture_ms'] = (capture_end - capture_start) * 1000
-            timing['pil_conversion_ms'] = (pil_end - pil_start) * 1000
-            timing['compression_ms'] = (compress_end - compress_start) * 1000
-            timing['base64_ms'] = (encode_end - encode_start) * 1000
             timing['total_processing_ms'] = total_time
+
             # Update stats
             self.update_latency_stats(timing)
 
@@ -106,7 +172,8 @@ class CameraServer:
     def update_latency_stats(self, timing):
         """Update latency statistics"""
         self.latency_stats['capture_times'].append(timing.get('capture_ms', 0))
-        self.latency_stats['encode_times'].append(timing.get('base64_ms', 0))
+        self.latency_stats['split_times'].append(timing.get('split_ms', 0))
+        self.latency_stats['encode_times'].append(timing.get('total_encode_ms', 0))
         self.latency_stats['total_times'].append(timing.get('total_processing_ms', 0))
 
         # Keep only last 100 measurements
@@ -120,11 +187,14 @@ class CameraServer:
             return
 
         avg_capture = sum(self.latency_stats['capture_times']) / len(self.latency_stats['capture_times'])
+        avg_split = sum(self.latency_stats['split_times']) / len(self.latency_stats['split_times'])
         avg_encode = sum(self.latency_stats['encode_times']) / len(self.latency_stats['encode_times'])
         avg_total = sum(self.latency_stats['total_times']) / len(self.latency_stats['total_times'])
 
-        logger.info(f"Latency Stats (Frame #{self.frame_counter}) - "
+        mode_text = "STEREO" if self.stereo_mode else "MONO"
+        logger.info(f"Latency Stats [{mode_text}] (Frame #{self.frame_counter}) - "
                     f"Capture: {avg_capture:.2f}ms, "
+                    f"Split: {avg_split:.2f}ms, "
                     f"Encode: {avg_encode:.2f}ms, "
                     f"Total: {avg_total:.2f}ms")
 
@@ -170,6 +240,22 @@ class CameraServer:
                         request_time = (time.time() - request_start) * 1000
                         logger.info(f"Frame request processed in {request_time:.2f}ms")
 
+                    elif data.get('type') == 'set_stereo_mode':
+                        # Client requesting stereo mode change
+                        new_mode = data.get('stereo_mode', self.stereo_mode)
+                        if new_mode != self.stereo_mode:
+                            self.stereo_mode = new_mode
+                            mode_text = "STEREO" if self.stereo_mode else "MONO"
+                            logger.info(f"Switched to {mode_text} mode")
+
+                            # Send confirmation to client
+                            response = {
+                                'type': 'stereo_mode_changed',
+                                'stereo_mode': self.stereo_mode,
+                                'timestamp': time.time()
+                            }
+                            await websocket.send(json.dumps(response))
+
                 except json.JSONDecodeError:
                     logger.warning(f"Invalid JSON received from {client_address}")
                 except Exception as e:
@@ -193,17 +279,28 @@ class CameraServer:
             frame_data, timing = frame_result
 
             message_build_start = time.time()
-            message = {
-                'type': 'camera_frame',
-                'timestamp': time.time(),
-                'frame_id': self.frame_counter,
-                'image': frame_data,
-                'server_timing': {
-                    'capture_ms': timing.get('capture_ms', 0),
-                    'compression_ms': timing.get('compression_ms', 0),
-                    'total_processing_ms': timing.get('total_processing_ms', 0)
+
+            # SWITCH: Late decision (right before sending)
+            if self.stereo_mode:
+                message = {
+                    'type': 'camera_frame_stereo',
+                    'timestamp': time.time(),
+                    'frame_id': self.frame_counter,
+                    'left_image': frame_data['left'],
+                    'right_image': frame_data['right'],
+                    'stereo_mode': True,
+                    'server_timing': timing
                 }
-            }
+            else:
+                message = {
+                    'type': 'camera_frame_mono',
+                    'timestamp': time.time(),
+                    'frame_id': self.frame_counter,
+                    'image': frame_data['mono'],
+                    'stereo_mode': False,
+                    'server_timing': timing
+                }
+
             message_build_time = (time.time() - message_build_start) * 1000
 
             try:
@@ -213,7 +310,8 @@ class CameraServer:
 
                 total_send_time = (time.time() - send_start_time) * 1000
 
-                logger.debug(f"Frame #{self.frame_counter} sent - "
+                mode_text = "STEREO" if self.stereo_mode else "MONO"
+                logger.debug(f"Frame #{self.frame_counter} sent [{mode_text}] - "
                              f"Build: {message_build_time:.2f}ms, "
                              f"WebSocket: {websocket_send_time:.2f}ms, "
                              f"Total: {total_send_time:.2f}ms")
@@ -233,13 +331,28 @@ class CameraServer:
                     frame_data, timing = frame_result
 
                     message_start = time.time()
-                    message = {
-                        'type': 'camera_frame',
-                        'timestamp': time.time(),
-                        'frame_id': self.frame_counter,
-                        'image': frame_data,
-                        'server_timing': timing
-                    }
+
+                    # SWITCH: Late decision (right before broadcasting)
+                    if self.stereo_mode:
+                        message = {
+                            'type': 'camera_frame_stereo',
+                            'timestamp': time.time(),
+                            'frame_id': self.frame_counter,
+                            'left_image': frame_data['left'],
+                            'right_image': frame_data['right'],
+                            'stereo_mode': True,
+                            'server_timing': timing
+                        }
+                    else:
+                        message = {
+                            'type': 'camera_frame_mono',
+                            'timestamp': time.time(),
+                            'frame_id': self.frame_counter,
+                            'image': frame_data['mono'],
+                            'stereo_mode': False,
+                            'server_timing': timing
+                        }
+
                     message_build_time = (time.time() - message_start) * 1000
 
                     # Send to all connected clients
@@ -266,13 +379,14 @@ class CameraServer:
                     loop_counter += 1
                     if loop_counter % 60 == 0:
                         total_loop_time = (time.time() - loop_start) * 1000
-                        logger.info(f"Broadcast #{loop_counter} - "
+                        mode_text = "STEREO" if self.stereo_mode else "MONO"
+                        logger.info(f"Broadcast #{loop_counter} [{mode_text}] - "
                                     f"Clients: {sent_count}, "
                                     f"Message build: {message_build_time:.2f}ms, "
                                     f"Send: {send_time:.2f}ms, "
                                     f"Total loop: {total_loop_time:.2f}ms")
 
-            await asyncio.sleep(1/30)  # 30 FPS
+            await asyncio.sleep(1/60)  # 60 FPS
 
     async def start_server(self):
         """Start the WebSocket server"""
@@ -282,7 +396,8 @@ class CameraServer:
 
         self.is_running = True
         server_start_time = time.time()
-        logger.info(f"Starting camera server on {self.host}:{self.port} at {server_start_time}")
+        mode_text = "STEREO" if self.stereo_mode else "MONO"
+        logger.info(f"Starting camera server [{mode_text}] on {self.host}:{self.port} at {server_start_time}")
 
         # Start the WebSocket server
         server = await websockets.serve(self.handle_client, self.host, self.port)
@@ -311,8 +426,12 @@ def main():
     SERVER_PORT = 8765
     IMAGE_QUALITY = 85  # JPEG quality (1-100)
     IMAGE_SIZE = (640, 480)  # Adjust based on VR glasses capability
+    # IMAGE_SIZE = (1280, 960)  # Higher resolution option
 
-    logger.info("Starting Raspberry Pi Camera Server with detailed timing...")
+    # STEREO MODE SWITCH - Set to False for mono mode
+    STEREO_MODE = True
+
+    logger.info("Starting Raspberry Pi Camera Server with stereo support...")
     startup_time = time.time()
 
     # Create and start server
@@ -320,7 +439,8 @@ def main():
         host=SERVER_HOST,
         port=SERVER_PORT,
         image_quality=IMAGE_QUALITY,
-        image_size=IMAGE_SIZE
+        image_size=IMAGE_SIZE,
+        stereo_mode=STEREO_MODE
     )
 
     try:
