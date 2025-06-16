@@ -320,11 +320,8 @@ class CameraServer:
 
         try:
             async for message in websocket:
-                message_received_time = time.time()
                 try:
-                    parse_start = time.time()
                     data = json.loads(message)
-                    parse_time = (time.time() - parse_start) * 1000
 
 
                     if data.get('type') == 'head_angles':
@@ -339,10 +336,6 @@ class CameraServer:
                         success = self.servo_control.update_servo_positions(pitch, yaw, roll)
                         if not success:
                             logger.warning("Failed to update servo positions")
-
-                        #TODO (28.05.2025): Integracja z Servo
-                        # Here you would integrate with your servo control code
-                        # self.control_servos(pitch, yaw, roll)
 
                     elif data.get('type') == 'request_frame':
                         # Client requesting a frame
