@@ -772,7 +772,7 @@ HTTP Requests
 -------------                                                   
 ```
 
-6. Zwróć uwagę na Forwarding URL (pełne). W tym przypadku `https://68f8-46-205-197-171.ngrok-free.app`.
+6. Zwróć uwagę na Forwarding URL (pełne) oraz ścieżkę do pliku vr.html. W tym przypadku będzie to `https://68f8-46-205-197-171.ngrok-free.app/vr.html`.
 
 ## META QUEST 3S
 
