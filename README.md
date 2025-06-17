@@ -748,8 +748,11 @@ HTTP Requests
 ```
 
 3. W miejsce WS_URL wklej odpowiednią część URL skopiowaną do schowka wcześniej
-4. Uruchom serwer http w directory, w którym siedzi plik vr.html za pomocą komendy `python3 -m http.server 8080`
+4. Zaloguj się i ustaw swój token z ngrok (https://dashboard.ngrok.com/get-started/your-authtoken), użyj komendy `ngrok config add-authtoken $YOUR_AUTHTOKEN`
+5. Uruchom serwer http w directory, w którym siedzi plik vr.html za pomocą komendy `python3 -m http.server 8080`
 5. Uruchom komendę `ngrok http http://localhost:8080` (UWAGA: ngrok darmowy pozwala na tylko jeden serwer na raz, dlatego polecam założyć dwa konta po prostu)
+
+
 
 Dostaniesz taki response:
 ```
