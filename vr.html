@@ -19,15 +19,26 @@
 </head>
 
 <body>
+<div id="debug">
+    WebSocket Status: <span id="wsStatus">Disconnected</span><br>
+    Frames Received: <span id="frameCount">0</span><br>
+    Last Frame: <span id="lastFrame">Never</span>
+</div>
 <button id="vrButton">Enter VR</button>
 <canvas id="canvas"></canvas>
 
 <script type="module">
     /* ---------------- konfiguracja ---------------- */
-    const WS_URL           = "wss://d061-37-47-109-108.ngrok-free.app";  // <-- RPi IP:port
+    const WS_URL           = "wss://8d53-149-156-124-3.ngrok-free.app";  // <-- RPi IP:port
     const SEND_INTERVAL_MS = 100;                        // co ile wysyłać kąty
     const Y_OFFSET = -0.25;
     const Z_DIST   = -2.0;
+
+    /* ---------------- debug elements ---------------- */
+    const wsStatus = document.getElementById('wsStatus');
+    const frameCount = document.getElementById('frameCount');
+    const lastFrame = document.getElementById('lastFrame');
+    let frameCounter = 0;
 
     /* ---------------- importy ---------------- */
     import * as THREE from
@@ -44,14 +55,35 @@
     /* ---------------- WebSocket ---------------- */
     const ws = new WebSocket(WS_URL);
 
-    ws.onopen    = () => console.log("WS connected");
-    ws.onclose   = e => console.log("WS closed", e.reason);
-    ws.onerror   = e => console.error("WS error", e);
+    ws.onopen    = () => {
+        console.log("WS connected");
+        wsStatus.textContent = "Connected";
+        wsStatus.style.color = "green";
+    };
+
+    ws.onclose   = e => {
+        console.log("WS closed", e.reason);
+        wsStatus.textContent = "Disconnected";
+        wsStatus.style.color = "red";
+    };
+
+    ws.onerror   = e => {
+        console.error("WS error", e);
+        wsStatus.textContent = "Error";
+        wsStatus.style.color = "red";
+    };
 
     ws.onmessage = ({ data }) => {
         try {
             const msg = JSON.parse(data);
+            console.log("Received message type:", msg.type);
+
             if (msg.type !== "camera_frame" || !msg.image) return;
+
+            frameCounter++;
+            frameCount.textContent = frameCounter;
+            lastFrame.textContent = new Date().toLocaleTimeString();
+            console.log("Processing camera frame...");
 
             const img = new Image();
             img.onload = () => {
@@ -66,6 +98,10 @@
                     .drawImage(img, 0, 0, half, h, 0, 0, half, h);
                 rC.getContext("2d")
                     .drawImage(img, half, 0, half, h, 0, 0, half, h);
+
+                // Sprawdź czy canvas nie jest pusty
+                const lData = lC.getContext("2d").getImageData(0, 0, 10, 10);
+                console.log("Left canvas first pixel:", lData.data.slice(0, 4));
 
                 leftTex.image  = lC;
                 rightTex.image = rC;
@@ -98,14 +134,35 @@
         camera.add(headLocked);
 
         const geom = new THREE.PlaneGeometry(3, 2.25);
-        const phMat = new THREE.MeshBasicMaterial({
-            color: 0x444444, side: THREE.DoubleSide
-        });
+// Do tutaj jest być może do wymianki
+
+        // const phMat = new THREE.MeshBasicMaterial({
+        //     color: 0x444444, side: THREE.DoubleSide
+        // });
+        //
+        // leftTex  = new THREE.Texture();
+        // rightTex = new THREE.Texture();
+        // leftMesh  = new THREE.Mesh(geom, phMat.clone());
+        // rightMesh = new THREE.Mesh(geom, phMat.clone());
+
 
         leftTex  = new THREE.Texture();
         rightTex = new THREE.Texture();
-        leftMesh  = new THREE.Mesh(geom, phMat.clone());
-        rightMesh = new THREE.Mesh(geom, phMat.clone());
+
+        leftMesh  = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
+            map: leftTex,
+            side: THREE.DoubleSide,
+            color: 0xffffff  // biały żeby tekstura była widoczna
+        }));
+
+        rightMesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
+            map: rightTex,
+            side: THREE.DoubleSide,
+            color: 0xffffff  // biały żeby tekstura była widoczna
+        }));
+
+
+
         leftMesh.layers.set(1);
         rightMesh.layers.set(2);
         headLocked.add(leftMesh, rightMesh);
@@ -116,7 +173,10 @@
             navigator.xr
                 .isSessionSupported("immersive-vr")
                 .then(ok => vrButton.disabled = !ok);
-        } else vrButton.disabled = true;
+        } else {
+            vrButton.disabled = true;
+            console.log("WebXR not supported");
+        }
 
         vrButton.onclick = startStopXR;
         window.onresize  = () => {
