@@ -219,62 +219,98 @@ class StereoImageProcessor:
 
     def create_visualization(self, left_frame, right_frame, depth_colored, motion_objects,
                              foreground_objects, keypoints_left, keypoints_right, matches):
-        """Create comprehensive visualization of all processing results"""
+        """Create compact visualization of all processing results"""
         try:
             height, width = left_frame.shape[:2]
 
-            # Create a large canvas for all visualizations
-            canvas_width = width * 3
+            # Create a more compact layout - 2x2 grid instead of sparse layout
+            canvas_width = width * 2
             canvas_height = height * 2
             canvas = np.zeros((canvas_height, canvas_width, 3), dtype=np.uint8)
 
-            # Position 1: Original left frame with overlays
+            # Position 1 (top-left): Original left frame with overlays
             frame_with_overlays = left_frame.copy()
 
             # Draw motion detection
             for x, y, w, h, area in motion_objects:
                 cv2.rectangle(frame_with_overlays, (x, y), (x+w, y+h), (0, 255, 255), 2)
-                cv2.putText(frame_with_overlays, f"Motion: {int(area)}",
-                            (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                cv2.putText(frame_with_overlays, f"M:{int(area)}",
+                            (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
 
             # Draw foreground objects
             for obj in foreground_objects:
                 x, y, w, h = obj['bbox']
                 depth = obj['depth']
                 cv2.rectangle(frame_with_overlays, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                cv2.putText(frame_with_overlays, f"FG: {int(depth)}mm",
-                            (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                cv2.putText(frame_with_overlays, f"FG:{int(depth)}mm",
+                            (x, y-25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
 
-            # Draw feature points
+            # Draw feature points (smaller circles)
             if self.processing_modes['features'] and len(keypoints_left) > 0:
-                for kp in keypoints_left[:50]:  # Show only first 50 points
+                for kp in keypoints_left[:30]:  # Show fewer points for cleaner look
                     x, y = map(int, kp.pt)
-                    cv2.circle(frame_with_overlays, (x, y), 3, (255, 0, 0), -1)
+                    cv2.circle(frame_with_overlays, (x, y), 2, (255, 0, 0), -1)
 
             canvas[0:height, 0:width] = frame_with_overlays
 
-            # Position 2: Right frame with feature points
+            # Position 2 (top-right): Right frame with feature points
             right_with_features = right_frame.copy()
             if self.processing_modes['features'] and len(keypoints_right) > 0:
-                for kp in keypoints_right[:50]:
+                for kp in keypoints_right[:30]:
                     x, y = map(int, kp.pt)
-                    cv2.circle(right_with_features, (x, y), 3, (255, 0, 0), -1)
+                    cv2.circle(right_with_features, (x, y), 2, (255, 0, 0), -1)
 
             canvas[0:height, width:width*2] = right_with_features
 
-            # Position 3: Depth map
+            # Position 3 (bottom-left): Depth map
             if depth_colored is not None:
-                canvas[0:height, width*2:width*3] = depth_colored
+                canvas[height:height*2, 0:width] = depth_colored
+            else:
+                # If no depth map, show a placeholder or info panel
+                info_panel = np.zeros((height, width, 3), dtype=np.uint8)
+                cv2.putText(info_panel, "Depth Map", (width//2-50, height//2),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(info_panel, "Press 'D' to enable", (width//2-80, height//2+30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 1)
+                canvas[height:height*2, 0:width] = info_panel
 
-            # Position 4: Feature matches visualization
-            if len(matches) > 0 and len(keypoints_left) > 0 and len(keypoints_right) > 0:
-                match_img = cv2.drawMatches(left_frame, keypoints_left, right_frame, keypoints_right,
-                                            matches[:20], None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-                # Resize to fit in bottom part of canvas
-                match_resized = cv2.resize(match_img, (canvas_width, height))
-                canvas[height:height*2, :] = match_resized
+            # Position 4 (bottom-right): Feature matches or statistics
+            if len(matches) > 10 and len(keypoints_left) > 0 and len(keypoints_right) > 0:
+                # Create a smaller match visualization
+                match_region = np.zeros((height, width, 3), dtype=np.uint8)
 
-            # Add information overlay
+                # Draw simplified matches
+                for i, match in enumerate(matches[:15]):  # Show fewer matches
+                    if i >= 15:
+                        break
+
+                    # Get keypoint coordinates
+                    pt1 = keypoints_left[match.queryIdx].pt
+                    pt2 = keypoints_right[match.trainIdx].pt
+
+                    # Scale coordinates to fit in the region
+                    x1, y1 = int(pt1[0] * 0.5), int(pt1[1])
+                    x2, y2 = int(pt2[0] * 0.5 + width * 0.5), int(pt2[1])
+
+                    # Draw keypoints and connection
+                    cv2.circle(match_region, (x1, y1), 2, (0, 255, 0), -1)
+                    cv2.circle(match_region, (x2, y2), 2, (0, 255, 0), -1)
+                    cv2.line(match_region, (x1, y1), (x2, y2), (255, 255, 0), 1)
+
+                # Add labels
+                cv2.putText(match_region, "Feature Matches", (10, 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                cv2.putText(match_region, f"Count: {len(matches)}", (10, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+                canvas[height:height*2, width:width*2] = match_region
+            else:
+                # Create statistics panel
+                stats_panel = np.zeros((height, width, 3), dtype=np.uint8)
+                self.add_compact_stats_overlay(stats_panel)
+                canvas[height:height*2, width:width*2] = stats_panel
+
+            # Add minimal info overlay
             self.add_info_overlay(canvas)
 
             return canvas
@@ -283,36 +319,93 @@ class StereoImageProcessor:
             logger.error(f"Error creating visualization: {e}")
             return left_frame
 
-    def add_info_overlay(self, canvas):
-        """Add processing statistics and information overlay"""
+    def add_compact_stats_overlay(self, panel):
+        """Add compact processing statistics overlay"""
         try:
-            # Background for text
-            overlay = canvas.copy()
-            cv2.rectangle(overlay, (10, 10), (400, 200), (0, 0, 0), -1)
-            cv2.addWeighted(overlay, 0.7, canvas, 0.3, 0, canvas)
+            height, width = panel.shape[:2]
 
-            # Statistics text
-            stats_text = [
-                "=== Stereo Processing Stats ===",
-                f"Features L/R: {self.stats['features_left']}/{self.stats['features_right']}",
-                f"Feature matches: {self.stats['matches']}",
-                f"Motion objects: {self.stats['motion_objects']}",
-                f"Depth points: {self.stats['depth_points']}",
+            # Title
+            cv2.putText(panel, "Processing Stats", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+
+            # Statistics with more compact layout
+            stats_lines = [
+                f"Features L: {self.stats['features_left']}",
+                f"Features R: {self.stats['features_right']}",
+                f"Matches: {self.stats['matches']}",
+                f"Motion obj: {self.stats['motion_objects']}",
+                f"Depth pts: {self.stats['depth_points']}",
                 "",
                 "Processing modes:",
-                f"[D] Depth: {'ON' if self.processing_modes['depth'] else 'OFF'}",
-                f"[F] Features: {'ON' if self.processing_modes['features'] else 'OFF'}",
-                f"[M] Motion: {'ON' if self.processing_modes['motion'] else 'OFF'}",
-                f"[G] Foreground: {'ON' if self.processing_modes['foreground'] else 'OFF'}"
+                f"Depth: {'ON' if self.processing_modes['depth'] else 'OFF'}",
+                f"Features: {'ON' if self.processing_modes['features'] else 'OFF'}",
+                f"Motion: {'ON' if self.processing_modes['motion'] else 'OFF'}",
+                f"Foreground: {'ON' if self.processing_modes['foreground'] else 'OFF'}"
             ]
 
-            for i, text in enumerate(stats_text):
-                color = (0, 255, 255) if text.startswith("===") else (255, 255, 255)
-                if text.startswith("["):
-                    color = (0, 255, 0) if "ON" in text else (0, 0, 255)
+            for i, line in enumerate(stats_lines):
+                y_pos = 55 + i * 25
+                if y_pos > height - 20:
+                    break
 
-                cv2.putText(canvas, text, (15, 30 + i * 15),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                if line == "":
+                    continue
+                elif line == "Processing modes:":
+                    color = (255, 255, 0)
+                    font_scale = 0.5
+                elif "ON" in line:
+                    color = (0, 255, 0)
+                    font_scale = 0.4
+                elif "OFF" in line:
+                    color = (0, 0, 255)
+                    font_scale = 0.4
+                else:
+                    color = (255, 255, 255)
+                    font_scale = 0.4
+
+                cv2.putText(panel, line, (10, y_pos),
+                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, 1)
+
+            # Add controls help at bottom
+            help_y = height - 60
+            cv2.putText(panel, "Controls:", (10, help_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 0), 1)
+            cv2.putText(panel, "D/F/M/G - Toggle modes", (10, help_y + 15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 200, 200), 1)
+            cv2.putText(panel, "C - Manual/Auto", (10, help_y + 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 200, 200), 1)
+            cv2.putText(panel, "T - Toggle size", (10, help_y + 45),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 200, 200), 1)
+
+        except Exception as e:
+            logger.error(f"Error adding compact stats overlay: {e}")
+
+    def add_info_overlay(self, canvas):
+        """Add minimal info overlay for the main display"""
+        try:
+            # Much smaller info overlay in top-left corner
+            height, width = canvas.shape[:2]
+
+            # Semi-transparent background
+            overlay = canvas.copy()
+            cv2.rectangle(overlay, (5, 5), (250, 80), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.6, canvas, 0.4, 0, canvas)
+
+            # Essential info only
+            cv2.putText(canvas, f"Features: L{self.stats['features_left']} R{self.stats['features_right']} M{self.stats['matches']}",
+                        (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            cv2.putText(canvas, f"Motion: {self.stats['motion_objects']} | Depth: {self.stats['depth_points']}",
+                        (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+            # Processing status indicators
+            status_text = ""
+            if self.processing_modes['depth']: status_text += "D "
+            if self.processing_modes['features']: status_text += "F "
+            if self.processing_modes['motion']: status_text += "M "
+            if self.processing_modes['foreground']: status_text += "G "
+
+            cv2.putText(canvas, f"Active: {status_text}", (10, 65),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
 
         except Exception as e:
             logger.error(f"Error adding info overlay: {e}")
@@ -564,7 +657,7 @@ class VRClient:
 
         # Add controls help in bottom-right
         help_texts = [
-            "Controls: C-Manual/Auto, R-Reset, Q-Quit",
+            "Controls: C-Manual/Auto, R-Reset, Q-Quit, T-Toggle Size",
             "Processing: D-Depth, F-Features, M-Motion, G-Foreground"
         ]
 
@@ -582,7 +675,7 @@ class VRClient:
 
         # Create OpenCV window
         cv2.namedWindow('VR Stereo Camera Processing', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('VR Stereo Camera Processing', 3840, 2160)
+        cv2.resizeWindow('VR Stereo Camera Processing', 1200, 800)
 
         try:
             async for message in self.websocket:
@@ -611,6 +704,14 @@ class VRClient:
                                 if key == ord('q') or key == 27:  # 'q' or ESC
                                     logger.info("Exit requested by user")
                                     break
+                                elif key == ord('t'):  # Toggle window size
+                                    current_size = cv2.getWindowImageRect('VR Stereo Camera Processing')
+                                    if current_size[2] > 1400:  # If large, make smaller
+                                        cv2.resizeWindow('VR Stereo Camera Processing', 1280, 960)
+                                        logger.info("Switched to normal size")
+                                    else:  # If small, make larger
+                                        cv2.resizeWindow('VR Stereo Camera Processing', 1600, 1200)
+                                        logger.info("Switched to large size")
                                 elif key != 255:  # Key was pressed
                                     self.handle_keyboard_input(key)
 
@@ -679,6 +780,7 @@ def main():
     print("- G: Toggle Foreground object detection")
     print("\nGeneral:")
     print("- Q/ESC: Quit application")
+    print("- T: Toggle window size (Normal/Large)")
     print("=" * 50)
     print("\nFeatures:")
     print("✓ Stereo depth map calculation")
