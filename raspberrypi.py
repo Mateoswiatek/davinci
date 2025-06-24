@@ -249,6 +249,9 @@ class CameraServer:
             # Timestamp: Start PIL conversion
             pil_start = time.time()
             image = Image.fromarray(frame)
+
+            image = image.rotate(180)
+
             pil_end = time.time()
 
             # Timestamp: Start JPEG compression
@@ -485,7 +488,8 @@ def main():
     SERVER_PORT = 8765
     IMAGE_QUALITY = 85  # JPEG quality (1-100)
     # IMAGE_SIZE = (640, 480)  # Adjust based on VR glasses capability
-    IMAGE_SIZE = (3200, 1080)  # Adjust based on VR glasses capability
+    IMAGE_SIZE = (1600, 540)  # Adjust based on VR glasses capability
+    # IMAGE_SIZE = (3200, 1080)  # Adjust based on VR glasses capability
 
     logger.info("Starting Raspberry Pi Camera Server with detailed timing...")
     startup_time = time.time()
