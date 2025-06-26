@@ -293,7 +293,7 @@ class VRClient:
 
 def main():
     # Configuration - Update this with your Raspberry Pi's IP address
-    PI_SERVER_HOST = '192.168.88.252'
+    PI_SERVER_HOST = '192.168.113.209'
     PI_SERVER_PORT = 8765
 
     print("VR Camera Client Test Application")
