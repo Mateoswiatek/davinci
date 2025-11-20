@@ -22,27 +22,34 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ServoControl:
-    def __init__(self, pan_pin=14, tilt_pin=23, roll_pin=18):
+    def __init__(self, pan_pin=14, tilt_pin=15, roll_pin=18):
         """Initialize servo control with VR client angle ranges"""
         self.pan_pin = pan_pin
         self.tilt_pin = tilt_pin
         self.roll_pin = roll_pin
 
         # VR Client angle ranges (centered at 0°)
-        self.max_pitch = 75.0   # ±75° pitch
-        self.max_yaw = 70.0     # ±70° yaw
-        self.max_roll = 70.0    # ±70° roll
+        self.max_pitch = 180.0   # ±75° pitch
+        self.max_yaw = 180.0     # ±70° yaw
+        self.max_roll = 180.0    # ±70° roll
 
         # Servo physical limits (degrees)
-        self.servo_pitch_min = 15
-        self.servo_pitch_max = 165
-        self.servo_yaw_min = 20
-        self.servo_yaw_max = 160
-        self.servo_roll_min = 20
-        self.servo_roll_max = 160
+        # self.servo_pitch_min = 15
+        # self.servo_pitch_max = 165
+        # self.servo_yaw_min = 20
+        # self.servo_yaw_max = 160
+        # self.servo_roll_min = 20
+        # self.servo_roll_max = 160
+
+        self.servo_pitch_min = 0
+        self.servo_pitch_max = 360
+        self.servo_yaw_min = 0
+        self.servo_yaw_max = 360
+        self.servo_roll_min = 0
+        self.servo_roll_max = 360
 
         # Current servo positions (start at center)
-        self.servo_center = 90
+        self.servo_center = 180
         self.current_pan = self.servo_center
         self.current_tilt = self.servo_center
         self.current_roll = self.servo_center
@@ -80,7 +87,6 @@ class ServoControl:
         self.move_to_center()
         self.servos_initialized = True
         logger.info("Servos initialized successfully")
-
         # except Exception as e:
         #     logger.error(f"Failed to initialize servos: {e}")
         #     self.servos_initialized = False
