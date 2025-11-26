@@ -29,6 +29,7 @@ class YOLOBackend(Enum):
     TFLITE = "tflite"        # TensorFlow Lite
     EDGETPU = "edgetpu"      # Google Coral EdgeTPU
     HAILO = "hailo"          # Hailo-8L (fastest overall)
+    OPENCV_DNN = "opencv_dnn"  # OpenCV DNN with Darknet (lightweight, no PyTorch needed)
 
 
 class FrameSkipStrategy(Enum):
@@ -122,6 +123,12 @@ class YOLOConfig:
     # CPU pinning
     cpu_affinity: Optional[List[int]] = None  # e.g., [3] to pin to CPU 3
 
+    # OpenCV DNN specific (for OPENCV_DNN backend)
+    opencv_config_path: Optional[str] = None  # Path to .cfg file
+    opencv_weights_path: Optional[str] = None  # Path to .weights file
+    opencv_names_path: Optional[str] = None  # Path to .names file (class names)
+    filter_classes: Optional[List[int]] = None  # Filter only specific classes (e.g., [0] for persons only)
+
 
 class YOLOProcessor:
     """
@@ -196,6 +203,8 @@ class YOLOProcessor:
                 self._load_edgetpu()
             elif self.config.backend == YOLOBackend.HAILO:
                 self._load_hailo()
+            elif self.config.backend == YOLOBackend.OPENCV_DNN:
+                self._load_opencv_dnn()
             else:
                 raise ValueError(f"Unsupported backend: {self.config.backend}")
 
@@ -286,6 +295,166 @@ class YOLOProcessor:
             logger.error("hailo_platform not installed. See: https://hailo.ai/developer-zone/")
             raise
 
+    def _load_opencv_dnn(self):
+        """
+        Load YOLOv4-tiny model using OpenCV DNN.
+
+        This is the lightweight, production-proven approach that works well on Raspberry Pi.
+        NO PyTorch or Ultralytics required - just OpenCV!
+
+        Expected files:
+        - .cfg file (network configuration)
+        - .weights file (pre-trained weights)
+        - .names file (class names)
+        """
+        import cv2
+        import os
+
+        # Determine file paths
+        config_path = self.config.opencv_config_path or self.config.model_path.replace('.weights', '.cfg')
+        weights_path = self.config.opencv_weights_path or self.config.model_path
+        names_path = self.config.opencv_names_path
+
+        # Auto-detect names file if not specified
+        if not names_path:
+            base_dir = os.path.dirname(weights_path) or '.'
+            names_path = os.path.join(base_dir, 'coco.names')
+
+        # Validate files exist
+        for path, name in [(config_path, 'config'), (weights_path, 'weights')]:
+            if not os.path.exists(path):
+                logger.error(f"OpenCV DNN {name} file not found: {path}")
+                logger.error("Download YOLOv4-tiny files:")
+                logger.error("  wget https://raw.githubusercontent.com/AlexeyAB/darknet/master/cfg/yolov4-tiny.cfg")
+                logger.error("  wget https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v4_pre/yolov4-tiny.weights")
+                logger.error("  wget https://raw.githubusercontent.com/AlexeyAB/darknet/master/data/coco.names")
+                raise FileNotFoundError(f"OpenCV DNN {name} file not found: {path}")
+
+        logger.info(f"Loading OpenCV DNN model...")
+        logger.info(f"  Config: {config_path}")
+        logger.info(f"  Weights: {weights_path}")
+        logger.info(f"  Names: {names_path}")
+
+        # Load network using OpenCV DNN
+        self.model = cv2.dnn.readNetFromDarknet(config_path, weights_path)
+
+        # Configure for CPU (optimal for Raspberry Pi)
+        self.model.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+        self.model.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+
+        # Get output layer names
+        layer_names = self.model.getLayerNames()
+        try:
+            # OpenCV 4.x format
+            self._opencv_output_layers = [layer_names[i - 1] for i in self.model.getUnconnectedOutLayers()]
+        except (TypeError, IndexError):
+            # OpenCV 3.x format
+            self._opencv_output_layers = [layer_names[i[0] - 1] for i in self.model.getUnconnectedOutLayers()]
+
+        # Load class names (use file if exists, otherwise use COCO_CLASSES)
+        if os.path.exists(names_path):
+            with open(names_path, 'r') as f:
+                self._opencv_classes = [line.strip() for line in f.readlines()]
+            logger.info(f"  Loaded {len(self._opencv_classes)} classes from {names_path}")
+        else:
+            self._opencv_classes = self.COCO_CLASSES
+            logger.info(f"  Using built-in COCO classes ({len(self._opencv_classes)} classes)")
+
+        logger.info(f"  Output layers: {self._opencv_output_layers}")
+        logger.info(f"  Input size: {self.config.input_size[0]}x{self.config.input_size[1]}")
+        logger.info("OpenCV DNN model loaded successfully!")
+
+    def _infer_opencv_dnn(self, frame: np.ndarray) -> List[Detection]:
+        """
+        Run inference using OpenCV DNN backend.
+
+        This is optimized for Raspberry Pi performance:
+        - Uses smaller input size (320x320 recommended)
+        - Efficient blob creation
+        - Built-in NMS from OpenCV
+        """
+        import cv2
+
+        height, width = frame.shape[:2]
+        input_size = self.config.input_size[0]  # Assume square input
+
+        # Create blob from image (this is the preprocessing step)
+        blob = cv2.dnn.blobFromImage(
+            frame,
+            1/255.0,                    # Scale factor (normalize to 0-1)
+            (input_size, input_size),   # Resize to input size
+            swapRB=True,                # Convert BGR -> RGB
+            crop=False                  # Don't crop, resize with padding
+        )
+
+        # Set input and run forward pass
+        self.model.setInput(blob)
+        outputs = self.model.forward(self._opencv_output_layers)
+
+        # Parse detections
+        boxes = []
+        confidences = []
+        class_ids = []
+
+        for output in outputs:
+            for detection in output:
+                scores = detection[5:]  # Class probabilities start at index 5
+                class_id = np.argmax(scores)
+                confidence = float(scores[class_id])
+
+                if confidence > self.config.confidence_threshold:
+                    # Check class filter if specified
+                    if self.config.filter_classes and class_id not in self.config.filter_classes:
+                        continue
+
+                    # Scale bounding box back to original image size
+                    center_x = int(detection[0] * width)
+                    center_y = int(detection[1] * height)
+                    w = int(detection[2] * width)
+                    h = int(detection[3] * height)
+
+                    # Calculate top-left corner
+                    x = int(center_x - w / 2)
+                    y = int(center_y - h / 2)
+
+                    boxes.append([x, y, w, h])
+                    confidences.append(confidence)
+                    class_ids.append(class_id)
+
+        # Apply Non-Maximum Suppression using OpenCV's built-in function
+        detections = []
+        if boxes:
+            indices = cv2.dnn.NMSBoxes(
+                boxes,
+                confidences,
+                self.config.confidence_threshold,
+                self.config.iou_threshold
+            )
+
+            if len(indices) > 0:
+                for i in indices.flatten():
+                    x, y, w, h = boxes[i]
+
+                    # Ensure coordinates are within image bounds
+                    x1 = max(0, x)
+                    y1 = max(0, y)
+                    x2 = min(width, x + w)
+                    y2 = min(height, y + h)
+
+                    cls_id = class_ids[i]
+                    cls_name = self._opencv_classes[cls_id] if cls_id < len(self._opencv_classes) else f"class_{cls_id}"
+
+                    detections.append(Detection(
+                        class_id=cls_id,
+                        class_name=cls_name,
+                        confidence=confidences[i],
+                        bbox=(x1, y1, x2, y2),
+                        center=((x1 + x2) // 2, (y1 + y2) // 2),
+                        area=(x2 - x1) * (y2 - y1)
+                    ))
+
+        return detections[:self.config.max_detections]
+
     def process(self, frame: np.ndarray, frame_id: int = 0) -> Optional[DetectionResult]:
         """
         Process a frame for object detection.
@@ -369,6 +538,8 @@ class YOLOProcessor:
             return self._infer_tflite(frame)
         elif self.config.backend == YOLOBackend.HAILO:
             return self._infer_hailo(frame)
+        elif self.config.backend == YOLOBackend.OPENCV_DNN:
+            return self._infer_opencv_dnn(frame)
         return []
 
     def _infer_pytorch(self, frame: np.ndarray) -> List[Detection]:

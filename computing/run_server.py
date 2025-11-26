@@ -7,8 +7,16 @@ Simple launcher for the VR streaming server with sensible defaults.
 Usage:
     python run_server.py                      # WebSocket on port 8000
     python run_server.py --with-udp           # WebSocket + UDP
-    python run_server.py --with-yolo          # With YOLO detection
+    python run_server.py --with-yolo          # With YOLO detection (OpenCV DNN - lightweight!)
+    python run_server.py --with-yolo-pytorch  # With YOLO detection (PyTorch - heavier)
     python run_server.py --target 192.168.1.X # UDP target for VR headset
+    python run_server.py --yolo-persons-only  # Detect only persons (class 0)
+
+YOLO Backend Options:
+    --yolo-backend opencv_dnn   # OpenCV DNN + YOLOv4-tiny (RECOMMENDED for Pi)
+    --yolo-backend pytorch      # PyTorch/Ultralytics YOLOv8 (requires more RAM)
+    --yolo-backend onnx         # ONNX Runtime
+    --yolo-backend ncnn         # NCNN (fastest CPU)
 """
 
 import asyncio
@@ -16,6 +24,7 @@ import argparse
 import logging
 import signal
 import sys
+import os
 
 # Setup path
 sys.path.insert(0, str(__file__).rsplit('/', 1)[0])
@@ -23,6 +32,13 @@ sys.path.insert(0, str(__file__).rsplit('/', 1)[0])
 from vr_streamer import VRStreamer, VRStreamerConfig, StreamProtocol
 from camera_capture import CameraProfile
 from yolo_processor import YOLOBackend
+
+# Default paths for YOLO models (relative to this script)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_YOLO_DIR = os.path.join(SCRIPT_DIR, "..", "yolo")
+DEFAULT_OPENCV_CONFIG = os.path.join(DEFAULT_YOLO_DIR, "yolov4-tiny.cfg")
+DEFAULT_OPENCV_WEIGHTS = os.path.join(DEFAULT_YOLO_DIR, "yolov4-tiny.weights")
+DEFAULT_OPENCV_NAMES = os.path.join(DEFAULT_YOLO_DIR, "coco.names")
 
 
 def main():
@@ -32,9 +48,26 @@ def main():
     parser.add_argument("--with-udp", action="store_true",
                         help="Enable UDP streaming alongside WebSocket")
     parser.add_argument("--with-yolo", action="store_true",
-                        help="Enable YOLO detection")
+                        help="Enable YOLO detection (uses OpenCV DNN by default - lightweight!)")
+    parser.add_argument("--with-yolo-pytorch", action="store_true",
+                        help="Enable YOLO detection with PyTorch/Ultralytics (heavier, needs more RAM)")
     parser.add_argument("--target", default="",
                         help="UDP target IP (e.g., 192.168.1.100)")
+
+    # YOLO options
+    parser.add_argument("--yolo-backend", default="opencv_dnn",
+                        choices=["opencv_dnn", "pytorch", "onnx", "ncnn", "tflite", "edgetpu", "hailo"],
+                        help="YOLO backend (default: opencv_dnn - recommended for Pi)")
+    parser.add_argument("--yolo-model", default="",
+                        help="Path to YOLO model (auto-detected based on backend)")
+    parser.add_argument("--yolo-skip", type=int, default=10,
+                        help="Process YOLO every N frames (default: 10 for better performance)")
+    parser.add_argument("--yolo-confidence", type=float, default=0.3,
+                        help="YOLO confidence threshold (default: 0.3)")
+    parser.add_argument("--yolo-input-size", type=int, default=320,
+                        help="YOLO input size (default: 320 for speed, use 416 for accuracy)")
+    parser.add_argument("--yolo-persons-only", action="store_true",
+                        help="Detect only persons (class 0) - improves performance")
 
     # Overrides
     parser.add_argument("--port", type=int, default=8000,
@@ -73,6 +106,28 @@ def main():
     else:
         protocol = StreamProtocol.WEBSOCKET
 
+    # Determine YOLO settings
+    yolo_enabled = args.with_yolo or args.with_yolo_pytorch
+
+    # Select backend based on flags
+    if args.with_yolo_pytorch:
+        yolo_backend = YOLOBackend.PYTORCH
+    else:
+        yolo_backend = YOLOBackend(args.yolo_backend)
+
+    # Auto-detect model path based on backend
+    if args.yolo_model:
+        yolo_model = args.yolo_model
+    elif yolo_backend == YOLOBackend.OPENCV_DNN:
+        yolo_model = DEFAULT_OPENCV_WEIGHTS
+    elif yolo_backend == YOLOBackend.PYTORCH:
+        yolo_model = "yolov8n.pt"
+    else:
+        yolo_model = args.yolo_model or "yolov8n.pt"
+
+    # Filter classes (persons only = class 0)
+    filter_classes = [0] if args.yolo_persons_only else None
+
     # Create config
     config = VRStreamerConfig(
         camera_width=args.width,
@@ -87,11 +142,20 @@ def main():
         target_port=5000,
         jpeg_quality=args.quality,
 
-        yolo_enabled=args.with_yolo,
-        yolo_model="yolov8n.pt",
-        yolo_skip_frames=3,
+        yolo_enabled=yolo_enabled,
+        yolo_model=yolo_model,
+        yolo_backend=yolo_backend,
+        yolo_skip_frames=args.yolo_skip,
         yolo_async=True,
         yolo_draw=True,
+        yolo_confidence=args.yolo_confidence,
+        yolo_input_size=args.yolo_input_size,
+        yolo_filter_classes=filter_classes,
+
+        # OpenCV DNN specific paths
+        yolo_opencv_config=DEFAULT_OPENCV_CONFIG if yolo_backend == YOLOBackend.OPENCV_DNN else None,
+        yolo_opencv_weights=DEFAULT_OPENCV_WEIGHTS if yolo_backend == YOLOBackend.OPENCV_DNN else None,
+        yolo_opencv_names=DEFAULT_OPENCV_NAMES if yolo_backend == YOLOBackend.OPENCV_DNN else None,
 
         show_stats=True,
         stats_interval=5.0,
@@ -108,7 +172,13 @@ def main():
     if protocol in (StreamProtocol.UDP, StreamProtocol.BOTH):
         print(f"  UDP Target: {config.target_host}:{config.target_port}")
     if config.yolo_enabled:
-        print(f"  YOLO: {config.yolo_model} (every {config.yolo_skip_frames} frames)")
+        print(f"  YOLO Backend: {yolo_backend.value}")
+        print(f"  YOLO Model: {yolo_model}")
+        print(f"  YOLO Skip: every {config.yolo_skip_frames} frames")
+        print(f"  YOLO Input: {args.yolo_input_size}x{args.yolo_input_size}")
+        print(f"  YOLO Confidence: {args.yolo_confidence}")
+        if args.yolo_persons_only:
+            print(f"  YOLO Filter: persons only (class 0)")
     print("="*60)
     print("  Press Ctrl+C to stop")
     print("="*60 + "\n")

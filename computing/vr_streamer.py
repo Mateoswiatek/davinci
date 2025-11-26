@@ -78,11 +78,18 @@ class VRStreamerConfig:
     # YOLO
     yolo_enabled: bool = False
     yolo_model: str = "yolov8n.pt"
-    yolo_backend: YOLOBackend = YOLOBackend.PYTORCH
-    yolo_skip_frames: int = 3
-    yolo_confidence: float = 0.5
+    yolo_backend: YOLOBackend = YOLOBackend.OPENCV_DNN  # Default to OpenCV DNN (lightweight!)
+    yolo_skip_frames: int = 10  # Default to 10 for better performance
+    yolo_confidence: float = 0.3  # Lower default for better detection
     yolo_async: bool = True
     yolo_draw: bool = True
+    yolo_input_size: int = 320  # Smaller = faster (320 for speed, 416 for accuracy)
+    yolo_filter_classes: Optional[List[int]] = None  # Filter specific classes (e.g., [0] for persons only)
+
+    # OpenCV DNN specific paths (for OPENCV_DNN backend)
+    yolo_opencv_config: Optional[str] = None  # Path to .cfg file
+    yolo_opencv_weights: Optional[str] = None  # Path to .weights file
+    yolo_opencv_names: Optional[str] = None  # Path to .names file
 
     # Performance
     cpu_affinity_camera: Optional[List[int]] = None
@@ -178,11 +185,19 @@ class VRStreamer:
             yolo_config = YOLOConfig(
                 model_path=self.config.yolo_model,
                 backend=self.config.yolo_backend,
+                input_size=(self.config.yolo_input_size, self.config.yolo_input_size),
                 confidence_threshold=self.config.yolo_confidence,
                 skip_strategy=FrameSkipStrategy.FIXED,
                 skip_n_frames=self.config.yolo_skip_frames,
-                cpu_affinity=self.config.cpu_affinity_yolo
+                cpu_affinity=self.config.cpu_affinity_yolo,
+                filter_classes=self.config.yolo_filter_classes,
+                # OpenCV DNN specific paths
+                opencv_config_path=self.config.yolo_opencv_config,
+                opencv_weights_path=self.config.yolo_opencv_weights,
+                opencv_names_path=self.config.yolo_opencv_names,
             )
+
+            logger.info(f"Initializing YOLO with backend: {self.config.yolo_backend.value}")
 
             if self.config.yolo_async:
                 self.yolo = AsyncYOLOProcessor(yolo_config)
@@ -426,14 +441,16 @@ def parse_args():
     yolo_group.add_argument("--yolo-model", default="yolov8n.pt", help="YOLO model path")
     yolo_group.add_argument(
         "--yolo-backend",
-        choices=["pytorch", "onnx", "ncnn", "tflite", "edgetpu", "hailo"],
-        default="pytorch",
-        help="YOLO backend"
+        choices=["opencv_dnn", "pytorch", "onnx", "ncnn", "tflite", "edgetpu", "hailo"],
+        default="opencv_dnn",
+        help="YOLO backend (opencv_dnn recommended for Pi)"
     )
-    yolo_group.add_argument("--yolo-skip", type=int, default=3, help="Process every N-th frame")
-    yolo_group.add_argument("--yolo-conf", type=float, default=0.5, help="Detection confidence threshold")
+    yolo_group.add_argument("--yolo-skip", type=int, default=10, help="Process every N-th frame (10 recommended)")
+    yolo_group.add_argument("--yolo-conf", type=float, default=0.3, help="Detection confidence threshold")
+    yolo_group.add_argument("--yolo-input-size", type=int, default=320, help="YOLO input size (320 for speed)")
     yolo_group.add_argument("--yolo-sync", action="store_true", help="Use synchronous YOLO (not recommended)")
     yolo_group.add_argument("--no-draw", action="store_true", help="Don't draw detections on frame")
+    yolo_group.add_argument("--yolo-persons-only", action="store_true", help="Detect only persons (class 0)")
 
     # Performance settings
     perf_group = parser.add_argument_group("Performance")
@@ -471,6 +488,7 @@ def create_config_from_args(args) -> VRStreamerConfig:
     }
 
     backend_map = {
+        "opencv_dnn": YOLOBackend.OPENCV_DNN,
         "pytorch": YOLOBackend.PYTORCH,
         "onnx": YOLOBackend.ONNX,
         "ncnn": YOLOBackend.NCNN,
@@ -478,6 +496,24 @@ def create_config_from_args(args) -> VRStreamerConfig:
         "edgetpu": YOLOBackend.EDGETPU,
         "hailo": YOLOBackend.HAILO
     }
+
+    # Auto-detect OpenCV DNN paths
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    yolo_dir = os.path.join(script_dir, "..", "yolo")
+
+    yolo_backend = backend_map.get(args.yolo_backend, YOLOBackend.OPENCV_DNN)
+
+    # Set OpenCV DNN paths if using that backend
+    opencv_config = None
+    opencv_weights = None
+    opencv_names = None
+    if yolo_backend == YOLOBackend.OPENCV_DNN:
+        opencv_config = os.path.join(yolo_dir, "yolov4-tiny.cfg")
+        opencv_weights = os.path.join(yolo_dir, "yolov4-tiny.weights")
+        opencv_names = os.path.join(yolo_dir, "coco.names")
+
+    # Filter classes if persons-only
+    filter_classes = [0] if hasattr(args, 'yolo_persons_only') and args.yolo_persons_only else None
 
     return VRStreamerConfig(
         camera_width=args.width,
@@ -494,12 +530,17 @@ def create_config_from_args(args) -> VRStreamerConfig:
         jpeg_quality=args.quality,
 
         yolo_enabled=args.yolo,
-        yolo_model=args.yolo_model,
-        yolo_backend=backend_map.get(args.yolo_backend, YOLOBackend.PYTORCH),
+        yolo_model=opencv_weights if yolo_backend == YOLOBackend.OPENCV_DNN else args.yolo_model,
+        yolo_backend=yolo_backend,
         yolo_skip_frames=args.yolo_skip,
         yolo_confidence=args.yolo_conf,
+        yolo_input_size=args.yolo_input_size if hasattr(args, 'yolo_input_size') else 320,
         yolo_async=not args.yolo_sync,
         yolo_draw=not args.no_draw,
+        yolo_filter_classes=filter_classes,
+        yolo_opencv_config=opencv_config,
+        yolo_opencv_weights=opencv_weights,
+        yolo_opencv_names=opencv_names,
 
         cpu_affinity_camera=args.cpu_camera,
         cpu_affinity_yolo=args.cpu_yolo,
