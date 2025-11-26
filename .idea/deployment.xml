@@ -1,16 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="pi@172.20.10.13:22 password" remoteFilesAllowedToDisappearOnAutoupload="false" confirmBeforeUploading="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="pi@192.168.0.171:22 password (2)" remoteFilesAllowedToDisappearOnAutoupload="false" confirmBeforeUploading="false">
     <option name="confirmBeforeUploading" value="false" />
     <serverData>
-      <paths name="pi@172.20.10.13:22 password">
+      <paths name="pi@192.168.0.171">
         <serverdata>
           <mappings>
-            <mapping deploy="Desktop/project/davinci" local="$PROJECT_DIR$" />
+            <mapping deploy="/Desktop/project/davinci" local="$PROJECT_DIR$" web="/" />
           </mappings>
-          <excludedPaths>
-            <excludedPath local="true" path="$PROJECT_DIR$/backend" />
-          </excludedPaths>
+        </serverdata>
+      </paths>
+      <paths name="pi@192.168.0.171:22 password">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/tmp/pycharm_project_423" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="pi@192.168.0.171:22 password (2)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/pi/Desktop/project/davinci" local="$PROJECT_DIR$" />
+          </mappings>
         </serverdata>
       </paths>
     </serverData>

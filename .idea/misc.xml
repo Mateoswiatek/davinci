@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.10 (.venv)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 virtualenv at /mnt/adata-disk/projects/agh/zaw/.venv" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Remote Python 3.11.2 (sftp://pi@192.168.0.171:22/home/pi/venv/davinci/bin/python3)" project-jdk-type="Python SDK" />
 </project>

@@ -145,7 +145,7 @@ class WebSocketStreamer(StreamingProtocol):
         """Handle WebSocket connections."""
         ws = web.WebSocketResponse(
             heartbeat=self.config.ping_interval,
-            receive_timeout=self.config.ping_timeout
+            # No receive_timeout - client may not send anything, only receive frames
         )
         await ws.prepare(request)
 
@@ -170,8 +170,14 @@ class WebSocketStreamer(StreamingProtocol):
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     logger.error(f"WebSocket error: {ws.exception()}")
                     break
+                elif msg.type == aiohttp.WSMsgType.CLOSE:
+                    logger.info(f"WebSocket client requested close: {client_ip}")
+                    break
+        except asyncio.CancelledError:
+            logger.info(f"WebSocket handler cancelled: {client_ip}")
         except Exception as e:
-            logger.error(f"WebSocket handler error: {e}")
+            if str(e):  # Only log if there's an actual error message
+                logger.error(f"WebSocket handler error: {e}")
         finally:
             async with self._lock:
                 self._clients.discard(ws)
