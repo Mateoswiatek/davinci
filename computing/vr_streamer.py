@@ -306,10 +306,10 @@ class VRStreamer:
                         self._stats['frames_processed_yolo'] += 1
                         self._stats['detections'] = detection.count
 
-                        # Prepare metadata for streaming
+                        # Prepare metadata for streaming (ensure JSON serializable)
                         metadata = {
                             'detections': [d.to_dict() for d in detection.detections],
-                            'inference_time_ms': detection.inference_time_ms
+                            'inference_time_ms': float(detection.inference_time_ms)
                         }
 
                 # 3. Draw detections on frame (if enabled)

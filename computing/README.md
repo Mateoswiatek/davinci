@@ -1,5 +1,9 @@
 # VR Streaming System for Raspberry Pi 5
 
+```bash
+/home/pi/venv/davinci/bin/python3 /home/pi/Desktop/project/davinci/computing/run_server.py --with-yolo
+```
+
 High-performance video streaming system designed for VR applications. Captures video from Picamera2, optionally processes with YOLO object detection, and streams to VR headsets (Oculus Quest) or debug clients.
 
 ## Features

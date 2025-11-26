@@ -387,14 +387,14 @@ class WebSocketStreamer(StreamingProtocol):
                     if self.config.use_binary:
                         await client.send_bytes(compressed)
                     else:
-                        # Send as base64 JSON
+                        # Send as base64 JSON (ensure all values are JSON serializable)
                         message = {
                             'type': 'frame',
-                            'frame_id': frame_id,
-                            'timestamp': timestamp,
+                            'frame_id': int(frame_id),
+                            'timestamp': float(timestamp),
                             'image': base64.b64encode(compressed).decode('utf-8'),
-                            'width': frame.shape[1],
-                            'height': frame.shape[0]
+                            'width': int(frame.shape[1]),
+                            'height': int(frame.shape[0])
                         }
 
                         if metadata and self.config.include_detections:

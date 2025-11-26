@@ -51,13 +51,14 @@ class Detection:
     area: int
 
     def to_dict(self) -> dict:
+        """Convert to JSON-serializable dict (handles numpy types)."""
         return {
-            'class_id': self.class_id,
-            'class_name': self.class_name,
-            'confidence': self.confidence,
-            'bbox': self.bbox,
-            'center': self.center,
-            'area': self.area
+            'class_id': int(self.class_id),
+            'class_name': str(self.class_name),
+            'confidence': float(self.confidence),
+            'bbox': [int(x) for x in self.bbox],
+            'center': [int(x) for x in self.center],
+            'area': int(self.area)
         }
 
 
