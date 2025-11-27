@@ -290,21 +290,33 @@ class VRStreamer:
                 self._stats['frames_captured'] += 1
 
                 # 2. YOLO processing (async - doesn't block)
+                yolo_submit_time = 0.0
+                yolo_get_time = 0.0
+                yolo_inference_time = 0.0
                 metadata = None
+
                 if self.yolo:
                     if isinstance(self.yolo, AsyncYOLOProcessor):
                         # Submit frame (non-blocking)
+                        yolo_submit_start = time.perf_counter()
                         self.yolo.submit(frame.data, frame.frame_id)
+                        yolo_submit_time = (time.perf_counter() - yolo_submit_start) * 1000
+
                         # Get latest result (non-blocking)
+                        yolo_get_start = time.perf_counter()
                         detection = self.yolo.get_result()
+                        yolo_get_time = (time.perf_counter() - yolo_get_start) * 1000
                     else:
                         # Sync processing
+                        yolo_sync_start = time.perf_counter()
                         detection = self.yolo.process(frame.data, frame.frame_id)
+                        yolo_inference_time = (time.perf_counter() - yolo_sync_start) * 1000
 
                     if detection:
                         self._last_detection = detection
                         self._stats['frames_processed_yolo'] += 1
                         self._stats['detections'] = detection.count
+                        yolo_inference_time = detection.inference_time_ms
 
                         # Prepare metadata for streaming (ensure JSON serializable)
                         metadata = {
@@ -313,11 +325,13 @@ class VRStreamer:
                         }
 
                 # 3. Draw detections on frame (if enabled)
+                draw_start = time.perf_counter()
                 display_frame = frame.data
                 if self.config.yolo_draw and self._last_detection:
                     display_frame = draw_detections(frame.data.copy(), self._last_detection)
+                draw_time = (time.perf_counter() - draw_start) * 1000
 
-                # 4. Stream frame
+                # 4. Stream frame (includes JPEG compression)
                 stream_start = time.perf_counter()
                 results = await self.streamer.broadcast_to_all(
                     display_frame,
@@ -336,6 +350,10 @@ class VRStreamer:
                 self._stats['avg_capture_ms'] = alpha * capture_time + (1 - alpha) * self._stats['avg_capture_ms']
                 self._stats['avg_stream_ms'] = alpha * stream_time + (1 - alpha) * self._stats['avg_stream_ms']
                 self._stats['avg_total_ms'] = alpha * total_time + (1 - alpha) * self._stats['avg_total_ms']
+                self._stats['avg_draw_ms'] = alpha * draw_time + (1 - alpha) * self._stats.get('avg_draw_ms', 0.0)
+                self._stats['avg_yolo_submit_ms'] = alpha * yolo_submit_time + (1 - alpha) * self._stats.get('avg_yolo_submit_ms', 0.0)
+                self._stats['avg_yolo_get_ms'] = alpha * yolo_get_time + (1 - alpha) * self._stats.get('avg_yolo_get_ms', 0.0)
+                self._stats['last_yolo_inference_ms'] = yolo_inference_time
 
                 # 5. Frame rate control
                 elapsed = time.time() - last_frame_time
@@ -362,6 +380,7 @@ class VRStreamer:
             fps = stats['frames_captured'] / self.config.stats_interval if self.config.stats_interval > 0 else 0
             self._stats['frames_captured'] = 0  # Reset counter
 
+            # Basic stats line
             logger.info(
                 f"FPS: {fps:.1f} | "
                 f"Capture: {stats['avg_capture_ms']:.1f}ms | "
@@ -370,6 +389,29 @@ class VRStreamer:
                 f"Clients: {stats['clients']} | "
                 f"Detections: {stats['detections']}"
             )
+
+            # Detailed timing breakdown
+            draw_ms = stats.get('avg_draw_ms', 0.0)
+            yolo_submit_ms = stats.get('avg_yolo_submit_ms', 0.0)
+            yolo_get_ms = stats.get('avg_yolo_get_ms', 0.0)
+            yolo_inference_ms = stats.get('last_yolo_inference_ms', 0.0)
+
+            logger.info(
+                f"  [Timing] "
+                f"Capture: {stats['avg_capture_ms']:.2f}ms | "
+                f"YOLO submit: {yolo_submit_ms:.2f}ms | "
+                f"YOLO get: {yolo_get_ms:.2f}ms | "
+                f"Draw: {draw_ms:.2f}ms | "
+                f"Stream+JPEG: {stats['avg_stream_ms']:.2f}ms"
+            )
+
+            if yolo_inference_ms > 0:
+                logger.info(
+                    f"  [YOLO] "
+                    f"Last inference: {yolo_inference_ms:.1f}ms | "
+                    f"Effective FPS: {1000/yolo_inference_ms:.1f} | "
+                    f"Processed: {stats['frames_processed_yolo']} frames"
+                )
 
     async def stop(self):
         """Stop the streaming pipeline."""

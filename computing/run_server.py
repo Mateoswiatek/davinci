@@ -81,6 +81,14 @@ def main():
     parser.add_argument("--quality", type=int, default=85,
                         help="JPEG quality")
 
+    # CPU pinning for performance
+    parser.add_argument("--cpu-camera", type=int, nargs="+",
+                        help="CPU cores for camera capture (e.g., --cpu-camera 2)")
+    parser.add_argument("--cpu-yolo", type=int, nargs="+",
+                        help="CPU cores for YOLO processing (e.g., --cpu-yolo 3)")
+    parser.add_argument("--cpu-network", type=int, nargs="+",
+                        help="CPU cores for network streaming")
+
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Verbose output")
 
@@ -157,6 +165,11 @@ def main():
         yolo_opencv_weights=DEFAULT_OPENCV_WEIGHTS if yolo_backend == YOLOBackend.OPENCV_DNN else None,
         yolo_opencv_names=DEFAULT_OPENCV_NAMES if yolo_backend == YOLOBackend.OPENCV_DNN else None,
 
+        # CPU pinning
+        cpu_affinity_camera=args.cpu_camera,
+        cpu_affinity_yolo=args.cpu_yolo,
+        cpu_affinity_network=args.cpu_network,
+
         show_stats=True,
         stats_interval=5.0,
         log_level="DEBUG" if args.verbose else "INFO"
@@ -179,6 +192,14 @@ def main():
         print(f"  YOLO Confidence: {args.yolo_confidence}")
         if args.yolo_persons_only:
             print(f"  YOLO Filter: persons only (class 0)")
+    if args.cpu_camera or args.cpu_yolo or args.cpu_network:
+        print(f"  CPU Pinning:")
+        if args.cpu_camera:
+            print(f"    Camera: CPU {args.cpu_camera}")
+        if args.cpu_yolo:
+            print(f"    YOLO: CPU {args.cpu_yolo}")
+        if args.cpu_network:
+            print(f"    Network: CPU {args.cpu_network}")
     print("="*60)
     print("  Press Ctrl+C to stop")
     print("="*60 + "\n")
