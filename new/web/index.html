@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>VR Stream Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #fff;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Container */
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+            background: rgba(20, 20, 20, 0.9);
+            border-bottom: 1px solid #333;
+            z-index: 100;
+        }
+
+        .header h1 {
+            font-size: 1.2rem;
+            font-weight: 500;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ff4444;
+        }
+
+        .status-indicator.connected {
+            background: #44ff44;
+        }
+
+        .status-text {
+            font-size: 0.9rem;
+            color: #888;
+        }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            gap: 10px;
+            padding: 10px 20px;
+            background: rgba(30, 30, 30, 0.9);
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .control-group label {
+            font-size: 0.85rem;
+            color: #888;
+        }
+
+        input[type="text"], input[type="number"], select {
+            padding: 8px 12px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #222;
+            color: #fff;
+            font-size: 0.9rem;
+        }
+
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            background: #2563eb;
+            color: #fff;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        button:disabled {
+            background: #444;
+            cursor: not-allowed;
+        }
+
+        button.danger {
+            background: #dc2626;
+        }
+
+        button.danger:hover {
+            background: #b91c1c;
+        }
+
+        button.success {
+            background: #16a34a;
+        }
+
+        /* Video container */
+        .video-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #000;
+            position: relative;
+            overflow: hidden;
+        }
+
+        #video {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+
+        /* Stats overlay */
+        .stats-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            z-index: 10;
+        }
+
+        .stats-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 5px;
+        }
+
+        .stats-label {
+            color: #888;
+        }
+
+        .stats-value {
+            color: #4ade80;
+            font-weight: bold;
+        }
+
+        .stats-value.warning {
+            color: #fbbf24;
+        }
+
+        .stats-value.error {
+            color: #f87171;
+        }
+
+        /* VR Button */
+        .vr-button {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            padding: 15px 30px;
+            font-size: 1.1rem;
+            background: #7c3aed;
+            z-index: 10;
+        }
+
+        .vr-button:hover {
+            background: #6d28d9;
+        }
+
+        /* Fullscreen mode */
+        .fullscreen .header,
+        .fullscreen .controls {
+            display: none;
+        }
+
+        .fullscreen .video-container {
+            height: 100vh;
+        }
+
+        /* Detection overlays */
+        .detection-box {
+            position: absolute;
+            border: 2px solid #4ade80;
+            pointer-events: none;
+        }
+
+        .detection-label {
+            position: absolute;
+            top: -25px;
+            left: 0;
+            background: #4ade80;
+            color: #000;
+            padding: 2px 8px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        /* Loading state */
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #333;
+            border-top-color: #4ade80;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Toast notifications */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            padding: 12px 24px;
+            border-radius: 8px;
+            z-index: 1000;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .toast.success {
+            background: #16a34a;
+        }
+
+        .toast.error {
+            background: #dc2626;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+            to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+            }
+
+            .control-group {
+                width: 100%;
+            }
+
+            input[type="text"] {
+                flex: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="app">
+        <!-- Header -->
+        <div class="header">
+            <h1>VR Stream Viewer</h1>
+            <div class="status">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span class="status-text" id="statusText">Disconnected</span>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+            <div class="control-group">
+                <label>Host:</label>
+                <input type="text" id="hostInput" value="localhost" placeholder="Server IP">
+            </div>
+
+            <div class="control-group">
+                <label>Port:</label>
+                <input type="number" id="portInput" value="8000" min="1" max="65535">
+            </div>
+
+            <div class="control-group">
+                <button id="connectBtn" class="success">Connect</button>
+                <button id="disconnectBtn" class="danger" disabled>Disconnect</button>
+            </div>
+
+            <div class="control-group">
+                <button id="fullscreenBtn">Fullscreen</button>
+                <button id="vrBtn" class="vr-button" style="display: none;">Enter VR</button>
+            </div>
+
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="showDetections" checked> Show Detections
+                </label>
+            </div>
+        </div>
+
+        <!-- Video Container -->
+        <div class="video-container" id="videoContainer">
+            <div class="loading" id="loading" style="display: none;">
+                <div class="spinner"></div>
+                <div>Connecting...</div>
+            </div>
+
+            <img id="video" alt="Video stream" style="display: none;">
+            <canvas id="canvas"></canvas>
+
+            <!-- Stats Overlay -->
+            <div class="stats-overlay" id="statsOverlay">
+                <div class="stats-row">
+                    <span class="stats-label">FPS:</span>
+                    <span class="stats-value" id="fpsValue">0</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Latency:</span>
+                    <span class="stats-value" id="latencyValue">0ms</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Frames:</span>
+                    <span class="stats-value" id="framesValue">0</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Objects:</span>
+                    <span class="stats-value" id="objectsValue">0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let ws = null;
+        let frameCount = 0;
+        let fpsCounter = 0;
+        let lastFpsUpdate = Date.now();
+        let latencies = [];
+
+        // Elements
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const loading = document.getElementById('loading');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const hostInput = document.getElementById('hostInput');
+        const portInput = document.getElementById('portInput');
+        const statsOverlay = document.getElementById('statsOverlay');
+        const videoContainer = document.getElementById('videoContainer');
+        const showDetections = document.getElementById('showDetections');
+
+        // Stats elements
+        const fpsValue = document.getElementById('fpsValue');
+        const latencyValue = document.getElementById('latencyValue');
+        const framesValue = document.getElementById('framesValue');
+        const objectsValue = document.getElementById('objectsValue');
+
+        // Auto-detect host
+        if (window.location.hostname && window.location.hostname !== 'localhost') {
+            hostInput.value = window.location.hostname;
+        }
+
+        // FPS counter update
+        setInterval(() => {
+            const now = Date.now();
+            const elapsed = (now - lastFpsUpdate) / 1000;
+            const fps = fpsCounter / elapsed;
+            fpsValue.textContent = fps.toFixed(1);
+            fpsCounter = 0;
+            lastFpsUpdate = now;
+
+            // Update latency
+            if (latencies.length > 0) {
+                const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+                latencyValue.textContent = avgLatency.toFixed(0) + 'ms';
+
+                // Color coding
+                if (avgLatency < 50) {
+                    latencyValue.className = 'stats-value';
+                } else if (avgLatency < 100) {
+                    latencyValue.className = 'stats-value warning';
+                } else {
+                    latencyValue.className = 'stats-value error';
+                }
+
+                latencies = [];
+            }
+        }, 1000);
+
+        // Connect
+        function connect() {
+            const host = hostInput.value;
+            const port = portInput.value;
+            const url = `ws://${host}:${port}/ws`;
+
+            loading.style.display = 'block';
+            video.style.display = 'none';
+
+            ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                console.log('Connected');
+                setConnected(true);
+                loading.style.display = 'none';
+                video.style.display = 'block';
+                showToast('Connected!', 'success');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                } catch (e) {
+                    console.error('Parse error:', e);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('Disconnected');
+                setConnected(false);
+                loading.style.display = 'none';
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                showToast('Connection failed', 'error');
+                loading.style.display = 'none';
+            };
+        }
+
+        // Disconnect
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            setConnected(false);
+        }
+
+        // Handle message
+        function handleMessage(data) {
+            if (data.type === 'frame') {
+                // Update video
+                video.src = 'data:image/jpeg;base64,' + data.image;
+
+                frameCount++;
+                fpsCounter++;
+                framesValue.textContent = frameCount;
+
+                // Calculate latency
+                if (data.timestamp) {
+                    const latency = Date.now() - (data.timestamp * 1000);
+                    latencies.push(latency);
+                }
+
+                // Handle detections
+                if (data.metadata && data.metadata.detections && showDetections.checked) {
+                    drawDetections(data.metadata.detections, data.width, data.height);
+                    objectsValue.textContent = data.metadata.detections.length;
+                } else {
+                    clearCanvas();
+                    objectsValue.textContent = '0';
+                }
+            }
+        }
+
+        // Draw detections
+        function drawDetections(detections, frameWidth, frameHeight) {
+            // Update canvas size
+            const rect = video.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            canvas.style.left = video.offsetLeft + 'px';
+            canvas.style.top = video.offsetTop + 'px';
+
+            // Scale factors
+            const scaleX = rect.width / frameWidth;
+            const scaleY = rect.height / frameHeight;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            detections.forEach(det => {
+                const [x1, y1, x2, y2] = det.bbox;
+
+                // Scale coordinates
+                const sx1 = x1 * scaleX;
+                const sy1 = y1 * scaleY;
+                const sx2 = x2 * scaleX;
+                const sy2 = y2 * scaleY;
+                const w = sx2 - sx1;
+                const h = sy2 - sy1;
+
+                // Draw box
+                ctx.strokeStyle = '#4ade80';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(sx1, sy1, w, h);
+
+                // Draw label background
+                const label = `${det.class_name}: ${(det.confidence * 100).toFixed(0)}%`;
+                ctx.font = 'bold 12px sans-serif';
+                const textWidth = ctx.measureText(label).width;
+
+                ctx.fillStyle = '#4ade80';
+                ctx.fillRect(sx1, sy1 - 20, textWidth + 10, 20);
+
+                // Draw label text
+                ctx.fillStyle = '#000';
+                ctx.fillText(label, sx1 + 5, sy1 - 6);
+            });
+        }
+
+        // Clear canvas
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // Set connected state
+        function setConnected(connected) {
+            statusIndicator.classList.toggle('connected', connected);
+            statusText.textContent = connected ? 'Connected' : 'Disconnected';
+            connectBtn.disabled = connected;
+            disconnectBtn.disabled = !connected;
+        }
+
+        // Toast notification
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+                toast.remove();
+            }, 3000);
+        }
+
+        // Fullscreen
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+                document.body.classList.add('fullscreen');
+            } else {
+                document.exitFullscreen();
+                document.body.classList.remove('fullscreen');
+            }
+        }
+
+        // Event listeners
+        connectBtn.addEventListener('click', connect);
+        disconnectBtn.addEventListener('click', disconnect);
+        document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreen);
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'f') toggleFullscreen();
+            if (e.key === 'Escape' && document.fullscreenElement) {
+                document.exitFullscreen();
+                document.body.classList.remove('fullscreen');
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (showDetections.checked && ws) {
+                // Redraw detections on resize
+                clearCanvas();
+            }
+        });
+
+        // VR Support (WebXR)
+        if (navigator.xr) {
+            navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+                if (supported) {
+                    document.getElementById('vrBtn').style.display = 'block';
+                }
+            });
+        }
+
+        console.log('VR Stream Viewer initialized');
+        console.log('Press F for fullscreen, Q to disconnect');
+    </script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+# VR Streamer Requirements
+# Install with: pip install -r requirements.txt
+
+# Core
+numpy>=1.24.0
+
+# Camera (Raspberry Pi only)
+# picamera2>=0.3.12  # Uncomment on Raspberry Pi
+
+# Image processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# Networking
+aiohttp>=3.9.0
+websockets>=12.0
+
+# YOLO (optional)
+# ultralytics>=8.0.0  # For YOLO detection
+
+# ONNX Runtime (optional - for ONNX backend)
+# onnxruntime>=1.16.0
+
+# Development
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# Type checking (optional)
+# mypy>=1.0.0
