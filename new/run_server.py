@@ -12,9 +12,12 @@ Usage:
 import asyncio
 import signal
 import logging
+import os
 
 from vr_streamer import VRStreamer, VRStreamerConfig, StreamProtocol
 from camera_capture import CameraProfile
+
+_WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,10 +32,19 @@ config = VRStreamerConfig(
     camera_fps=30,
     camera_profile=CameraProfile.LOW_LATENCY,
 
+    web_dir=_WEB_DIR,
+
     protocol=StreamProtocol.WEBSOCKET,
     host="0.0.0.0",
     port=8000,
     jpeg_quality=85,
+
+    # SSL — required for WebXR on Oculus Quest (wss:// instead of ws://)
+    # Generate once on RPi:
+    #   openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=raspberrypi.local"
+    # Then accept the cert warning once in Oculus browser at https://<RPi-IP>:8000
+    ssl_certfile="/home/pi/certs/cert.pem",  # None
+    ssl_keyfile="/home/pi/certs/key.pem", # None
 
     show_stats=True,
     stats_interval=5.0,
@@ -59,9 +71,16 @@ async def run():
 
 
 if __name__ == "__main__":
+    ssl_enabled = bool(config.ssl_certfile and config.ssl_keyfile)
+    scheme = "https" if ssl_enabled else "http"
+    ws_scheme = "wss" if ssl_enabled else "ws"
     print(f"\nVR Streaming Server")
     print(f"  Camera:     {config.camera_width}x{config.camera_height} @ {config.camera_fps}fps")
-    print(f"  WebSocket:  ws://0.0.0.0:{config.port}")
-    print(f"  Web viewer: http://0.0.0.0:{config.port}")
+    print(f"  WebSocket:  {ws_scheme}://0.0.0.0:{config.port}/ws")
+    print(f"  Web viewer: {scheme}://0.0.0.0:{config.port}")
+    if ssl_enabled:
+        print(f"  SSL:        enabled ({config.ssl_certfile})")
+    else:
+        print(f"  SSL:        disabled  (set ssl_certfile/ssl_keyfile for Oculus WebXR)")
     print(f"  Press Ctrl+C to stop\n")
     asyncio.run(run())

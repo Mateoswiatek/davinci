@@ -57,6 +57,13 @@ class VRStreamerConfig:
     target_port: int = 5000
     jpeg_quality: int = 85
 
+    # Web viewer — path to web/ directory (serves index.html at /)
+    web_dir: Optional[str] = None
+
+    # SSL — set both to enable HTTPS/WSS (required for WebXR on Oculus)
+    ssl_certfile: Optional[str] = None  # e.g. "/home/pi/certs/cert.pem"
+    ssl_keyfile: Optional[str] = None   # e.g. "/home/pi/certs/key.pem"
+
     # Debug
     show_stats: bool = True
     stats_interval: float = 5.0
@@ -113,6 +120,9 @@ class VRStreamer:
                 port=self.config.port,
                 compression=CompressionFormat.JPEG,
                 jpeg_quality=self.config.jpeg_quality,
+                static_path=self.config.web_dir,
+                ssl_certfile=self.config.ssl_certfile,
+                ssl_keyfile=self.config.ssl_keyfile,
             )
             ws_streamer = WebSocketStreamer(ws_config)
             if await ws_streamer.start():

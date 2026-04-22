@@ -19,6 +19,8 @@ import json
 import base64
 import time
 import logging
+import ssl
+import os
 from typing import Optional, Dict, Any, Set
 from dataclasses import dataclass
 import numpy as np
@@ -53,6 +55,10 @@ class WebSocketConfig(StreamConfig):
     # HTTP server
     enable_http: bool = True
     static_path: Optional[str] = None  # Path to serve static files
+
+    # SSL — set both to enable HTTPS/WSS
+    ssl_certfile: Optional[str] = None  # Path to cert.pem
+    ssl_keyfile: Optional[str] = None   # Path to key.pem
 
     # Ping/Pong
     ping_interval: float = 20.0
@@ -93,10 +99,20 @@ class WebSocketStreamer(StreamingProtocol):
             self._app.router.add_get('/health', self._health_handler)
 
             if self.config.enable_http:
-                self._app.router.add_get('/', self._index_handler)
+                index_file = (
+                    os.path.join(self.config.static_path, 'index.html')
+                    if self.config.static_path else None
+                )
+                if index_file and os.path.exists(index_file):
+                    self._app.router.add_get('/', lambda r, p=index_file: web.FileResponse(p))
+                else:
+                    self._app.router.add_get('/', self._index_handler)
 
-            if self.config.static_path:
-                self._app.router.add_static('/static', self.config.static_path)
+            # SSL context (optional)
+            ssl_context = None
+            if self.config.ssl_certfile and self.config.ssl_keyfile:
+                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ssl_context.load_cert_chain(self.config.ssl_certfile, self.config.ssl_keyfile)
 
             # Start server
             self._runner = web.AppRunner(self._app)
@@ -105,14 +121,17 @@ class WebSocketStreamer(StreamingProtocol):
             self._site = web.TCPSite(
                 self._runner,
                 self.config.host,
-                self.config.port
+                self.config.port,
+                ssl_context=ssl_context,
             )
             await self._site.start()
 
             self._running = True
-            logger.info(f"WebSocket server started on http://{self.config.host}:{self.config.port}")
-            logger.info(f"  WebSocket: ws://{self.config.host}:{self.config.port}/ws")
-            logger.info(f"  MJPEG: http://{self.config.host}:{self.config.port}/stream")
+            scheme = "https" if ssl_context else "http"
+            ws_scheme = "wss" if ssl_context else "ws"
+            logger.info(f"WebSocket server started on {scheme}://{self.config.host}:{self.config.port}")
+            logger.info(f"  WebSocket: {ws_scheme}://{self.config.host}:{self.config.port}/ws")
+            logger.info(f"  MJPEG: {scheme}://{self.config.host}:{self.config.port}/stream")
 
             return True
 
@@ -288,7 +307,8 @@ class WebSocketStreamer(StreamingProtocol):
         function startWebSocket() {
             stop();
             const host = window.location.host;
-            ws = new WebSocket(`ws://${host}/ws`);
+            const wsScheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${wsScheme}//${host}/ws`);
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);

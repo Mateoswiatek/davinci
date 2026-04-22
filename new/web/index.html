@@ -396,9 +396,12 @@
         const framesValue = document.getElementById('framesValue');
         const objectsValue = document.getElementById('objectsValue');
 
-        // Auto-detect host
+        // Auto-detect host and port from URL
         if (window.location.hostname && window.location.hostname !== 'localhost') {
             hostInput.value = window.location.hostname;
+        }
+        if (window.location.port) {
+            portInput.value = window.location.port;
         }
 
         // FPS counter update
@@ -432,7 +435,8 @@
         function connect() {
             const host = hostInput.value;
             const port = portInput.value;
-            const url = `ws://${host}:${port}/ws`;
+            const wsScheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const url = `${wsScheme}//${host}:${port}/ws`;
 
             loading.style.display = 'block';
             video.style.display = 'none';
