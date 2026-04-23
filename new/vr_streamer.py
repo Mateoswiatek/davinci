@@ -81,6 +81,8 @@ class VRStreamerConfig:
     servo_initial_pan: float = 0.0   # Startup position in degrees
     servo_initial_tilt: float = 0.0
     servo_initial_roll: float = 0.0
+    servo_tilt_invert: bool = False  # Flip tilt direction (servo mounted reversed)
+    servo_roll_invert: bool = False  # Flip roll direction (servo mounted reversed)
 
     # Debug
     show_stats: bool = True
@@ -353,6 +355,11 @@ class VRStreamer:
             pitch = data.get('pitch')
             yaw   = data.get('yaw')
             roll  = data.get('roll')
+
+            if pitch is not None and self.config.servo_tilt_invert:
+                pitch = -pitch
+            if roll is not None and self.config.servo_roll_invert:
+                roll = -roll
 
             if not self._first_angle_logged:
                 logger.info(f"First head_angles received: pitch={pitch} yaw={yaw} roll={roll}")

@@ -59,6 +59,8 @@ config = VRStreamerConfig(
     servo_step=0.25,          # Quantization step in degrees
     angle_send_hz=20.0,       # Head angle update rate from Oculus (Hz)
     send_servo_position=True,  # Include servo angles in each frame message
+    servo_tilt_invert=True,    # Tilt servo mounted reversed
+    servo_roll_invert=True,    # Roll servo mounted reversed
     # Pozycja startowa (°) — ustaw tak, żeby głowa była prosto przy kącie 0
     servo_initial_pan=0.0,
     servo_initial_tilt=45.0,   # skalibrowane
