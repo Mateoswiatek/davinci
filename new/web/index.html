@@ -29,6 +29,8 @@
 
         .header h1 { font-size: 1.2rem; font-weight: 500; }
 
+        .header-right { display: flex; align-items: center; gap: 12px; }
+
         .status { display: flex; align-items: center; gap: 10px; }
 
         .status-indicator {
@@ -38,6 +40,17 @@
         }
         .status-indicator.connected { background: #44ff44; }
         .status-text { font-size: 0.9rem; color: #888; }
+
+        .role-badge {
+            display: none;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+        }
+        .role-badge.controller { background: #16a34a; color: #fff; }
+        .role-badge.observer   { background: #b45309; color: #fff; }
 
         .controls {
             display: flex; gap: 10px;
@@ -68,9 +81,12 @@
         }
         button:hover { background: #1d4ed8; }
         button:disabled { background: #444; cursor: not-allowed; }
-        button.danger { background: #dc2626; }
-        button.danger:hover { background: #b91c1c; }
+        button.danger  { background: #dc2626; }
+        button.danger:hover  { background: #b91c1c; }
         button.success { background: #16a34a; }
+        button.success:hover { background: #15803d; }
+        button.warning { background: #b45309; }
+        button.warning:hover { background: #92400e; }
         button.vr { background: #7c3aed; font-weight: bold; }
         button.vr:hover { background: #6d28d9; }
 
@@ -101,6 +117,7 @@
             display: flex; justify-content: space-between;
             gap: 20px; margin-bottom: 5px;
         }
+        .stats-row:last-child { margin-bottom: 0; }
         .stats-label { color: #888; }
         .stats-value { color: #4ade80; font-weight: bold; }
         .stats-value.warning { color: #fbbf24; }
@@ -129,7 +146,7 @@
             animation: fadeIn 0.3s ease;
         }
         .toast.success { background: #16a34a; }
-        .toast.error { background: #dc2626; }
+        .toast.error   { background: #dc2626; }
         @keyframes fadeIn {
             from { opacity: 0; transform: translateX(-50%) translateY(20px); }
             to   { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -146,9 +163,12 @@
 <div class="container" id="app">
     <div class="header">
         <h1>VR Stream Viewer</h1>
-        <div class="status">
-            <div class="status-indicator" id="statusIndicator"></div>
-            <span class="status-text" id="statusText">Disconnected</span>
+        <div class="header-right">
+            <span class="role-badge" id="roleBadge"></span>
+            <div class="status">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span class="status-text" id="statusText">Disconnected</span>
+            </div>
         </div>
     </div>
 
@@ -168,6 +188,12 @@
         <div class="control-group">
             <button id="fullscreenBtn">Fullscreen</button>
             <button id="vrBtn" class="vr" style="display:none">Enter VR</button>
+        </div>
+        <!-- Servo / role controls — visible only when server has servo enabled -->
+        <div class="control-group" id="servoGroup" style="display:none">
+            <button id="takeControlBtn" class="success" style="display:none">Take Control</button>
+            <button id="releaseControlBtn" class="warning" style="display:none">Release Control</button>
+            <button id="calibrateBtn" style="display:none">Calibrate</button>
         </div>
     </div>
 
@@ -192,6 +218,11 @@
                 <span class="stats-label">Frames:</span>
                 <span class="stats-value" id="framesValue">0</span>
             </div>
+            <!-- Servo position rows — hidden until servo data arrives -->
+            <div class="stats-row" id="servoStatsRow" style="display:none">
+                <span class="stats-label">Pan/Tilt/Roll:</span>
+                <span class="stats-value" id="servoValue">—</span>
+            </div>
         </div>
     </div>
 </div>
@@ -207,19 +238,34 @@ let fpsCounter = 0;
 let lastFpsUpdate = Date.now();
 let latencies = [];
 
+// Role / servo state
+let myRole = null;
+let controllerAvailable = false;
+let angleInterval = 50;   // ms between angle sends (default 20 Hz)
+let zeroPoint = { pitch: 0, yaw: 0, roll: 0 };
+let calibratePending = false;
+let lastAngleSendTime = 0;
+
 // ── DOM ───────────────────────────────────────────────────────────────────────
-const video       = document.getElementById('video');
-const loading     = document.getElementById('loading');
-const statusInd   = document.getElementById('statusIndicator');
-const statusText  = document.getElementById('statusText');
-const connectBtn  = document.getElementById('connectBtn');
-const disconnBtn  = document.getElementById('disconnectBtn');
-const hostInput   = document.getElementById('hostInput');
-const portInput   = document.getElementById('portInput');
-const fpsValue    = document.getElementById('fpsValue');
-const latValue    = document.getElementById('latencyValue');
-const framesValue = document.getElementById('framesValue');
-const vrBtn       = document.getElementById('vrBtn');
+const video            = document.getElementById('video');
+const loading          = document.getElementById('loading');
+const statusInd        = document.getElementById('statusIndicator');
+const statusText       = document.getElementById('statusText');
+const connectBtn       = document.getElementById('connectBtn');
+const disconnBtn       = document.getElementById('disconnectBtn');
+const hostInput        = document.getElementById('hostInput');
+const portInput        = document.getElementById('portInput');
+const fpsValue         = document.getElementById('fpsValue');
+const latValue         = document.getElementById('latencyValue');
+const framesValue      = document.getElementById('framesValue');
+const vrBtn            = document.getElementById('vrBtn');
+const roleBadge        = document.getElementById('roleBadge');
+const servoGroup       = document.getElementById('servoGroup');
+const takeControlBtn   = document.getElementById('takeControlBtn');
+const releaseControlBtn = document.getElementById('releaseControlBtn');
+const calibrateBtn     = document.getElementById('calibrateBtn');
+const servoStatsRow    = document.getElementById('servoStatsRow');
+const servoValue       = document.getElementById('servoValue');
 
 // ── Auto-detect host/port from URL ────────────────────────────────────────────
 if (window.location.hostname && window.location.hostname !== 'localhost') {
@@ -284,15 +330,55 @@ function disconnect() {
     setConnected(false);
 }
 
+function send(data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(data));
+    }
+}
+
+// ── Message handling ──────────────────────────────────────────────────────────
 function handleMessage(data) {
-    if (data.type !== 'frame') return;
+    switch (data.type) {
+        case 'frame':
+            handleFrame(data);
+            break;
 
+        case 'role':
+            myRole = data.role;
+            controllerAvailable = data.controller_available || false;
+            if (data.angle_send_hz) angleInterval = 1000 / data.angle_send_hz;
+            updateRoleUI();
+            showToast('Role: ' + myRole, myRole === 'controller' ? 'success' : '');
+            if (data.servo_position) updateServoDisplay(data.servo_position);
+            break;
+
+        case 'role_update':
+            controllerAvailable = data.controller_available || false;
+            updateRoleUI();
+            if (controllerAvailable && myRole === 'observer') {
+                showToast('Controller slot available — take control?');
+            }
+            break;
+
+        case 'control_result':
+            if (data.success) {
+                myRole = data.role;
+                controllerAvailable = false;
+                updateRoleUI();
+                showToast(
+                    myRole === 'controller' ? 'You are now Controller' : 'Control released',
+                    'success'
+                );
+            } else {
+                showToast('Control request denied', 'error');
+            }
+            break;
+    }
+}
+
+function handleFrame(data) {
     const src = 'data:image/jpeg;base64,' + data.image;
-
-    // Normal viewer
     video.src = src;
-
-    // VR mode — update WebGL texture
     if (xrSession) updateXRTexture(src);
 
     frameCount++;
@@ -302,13 +388,49 @@ function handleMessage(data) {
     if (data.timestamp) {
         latencies.push(Date.now() - data.timestamp * 1000);
     }
+    if (data.metadata && data.metadata.servo) {
+        updateServoDisplay(data.metadata.servo);
+    }
 }
 
+// ── Role UI ───────────────────────────────────────────────────────────────────
+function updateRoleUI() {
+    if (myRole) {
+        servoGroup.style.display = 'flex';
+        roleBadge.style.display = 'inline-block';
+        roleBadge.textContent = myRole === 'controller' ? 'Controller' : 'Observer';
+        roleBadge.className = 'role-badge ' + (myRole === 'controller' ? 'controller' : 'observer');
+    } else {
+        servoGroup.style.display = 'none';
+        roleBadge.style.display = 'none';
+    }
+    takeControlBtn.style.display =
+        (myRole === 'observer' && controllerAvailable) ? 'inline-block' : 'none';
+    releaseControlBtn.style.display =
+        (myRole === 'controller') ? 'inline-block' : 'none';
+    calibrateBtn.style.display =
+        (myRole === 'controller') ? 'inline-block' : 'none';
+}
+
+function updateServoDisplay(servo) {
+    servoStatsRow.style.display = 'flex';
+    servoValue.textContent =
+        servo.pan.toFixed(1) + '° / ' +
+        servo.tilt.toFixed(1) + '° / ' +
+        servo.roll.toFixed(1) + '°';
+}
+
+// ── Connection state ──────────────────────────────────────────────────────────
 function setConnected(connected) {
     statusInd.classList.toggle('connected', connected);
     statusText.textContent = connected ? 'Connected' : 'Disconnected';
     connectBtn.disabled = connected;
     disconnBtn.disabled = !connected;
+    if (!connected) {
+        myRole = null;
+        controllerAvailable = false;
+        updateRoleUI();
+    }
 }
 
 // ── WebXR + WebGL ─────────────────────────────────────────────────────────────
@@ -319,14 +441,13 @@ let glTexture  = null;
 let glPosBuf   = null;
 let uTexLoc    = null;
 let aPosLoc    = null;
-const texImg   = new Image(); // reused image element for texture uploads
+const texImg   = new Image();
 
 const VS = `
     attribute vec2 aPos;
     varying vec2 vUV;
     void main() {
         gl_Position = vec4(aPos, 0.0, 1.0);
-        // flip Y: WebGL Y=0 is bottom, image Y=0 is top
         vUV = vec2(aPos.x * 0.5 + 0.5, 0.5 - aPos.y * 0.5);
     }
 `;
@@ -345,7 +466,6 @@ function initWebGL() {
     gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false });
     if (!gl) { showToast('WebGL not available', 'error'); return false; }
 
-    // Compile shaders
     function makeShader(type, src) {
         const s = gl.createShader(type);
         gl.shaderSource(s, src);
@@ -361,7 +481,6 @@ function initWebGL() {
     uTexLoc = gl.getUniformLocation(glProgram, 'uTex');
     aPosLoc = gl.getAttribLocation(glProgram, 'aPos');
 
-    // Fullscreen quad (2 triangles)
     glPosBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, glPosBuf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
@@ -369,18 +488,15 @@ function initWebGL() {
          1, -1,   1,  1,  -1,  1
     ]), gl.STATIC_DRAW);
 
-    // Texture
     glTexture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, glTexture);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    // 1×1 black placeholder
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 1, 1, 0, gl.RGB, gl.UNSIGNED_BYTE,
                   new Uint8Array([0, 0, 0]));
 
-    // Upload new frame when image loads
     texImg.onload = () => {
         if (!gl) return;
         gl.bindTexture(gl.TEXTURE_2D, glTexture);
@@ -392,6 +508,24 @@ function initWebGL() {
 
 function updateXRTexture(src) {
     texImg.src = src;
+}
+
+// Convert quaternion to Euler angles (degrees): pitch (X), yaw (Y), roll (Z)
+function quatToEuler(q) {
+    const sinr = 2 * (q.w * q.x + q.y * q.z);
+    const cosr = 1 - 2 * (q.x * q.x + q.y * q.y);
+    const pitch = Math.atan2(sinr, cosr) * (180 / Math.PI);
+
+    const sinp = 2 * (q.w * q.y - q.z * q.x);
+    const yaw = (Math.abs(sinp) >= 1
+        ? Math.sign(sinp) * 90
+        : Math.asin(sinp) * (180 / Math.PI));
+
+    const siny = 2 * (q.w * q.z + q.x * q.y);
+    const cosy = 1 - 2 * (q.y * q.y + q.z * q.z);
+    const roll = Math.atan2(siny, cosy) * (180 / Math.PI);
+
+    return { pitch, yaw, roll };
 }
 
 async function enterVR() {
@@ -422,22 +556,40 @@ async function enterVR() {
             const pose  = frame.getViewerPose(refSpace);
             if (!pose) return;
 
+            // Capture calibration zero-point on the next frame after button press
+            if (calibratePending) {
+                zeroPoint = quatToEuler(pose.transform.orientation);
+                calibratePending = false;
+                showToast('Calibrated!', 'success');
+            }
+
+            // Send head angles to server at configured rate (controller only)
+            if (myRole === 'controller' && ws && ws.readyState === WebSocket.OPEN) {
+                const now = performance.now();
+                if (now - lastAngleSendTime >= angleInterval) {
+                    const raw = quatToEuler(pose.transform.orientation);
+                    send({
+                        type: 'head_angles',
+                        pitch: parseFloat((raw.pitch - zeroPoint.pitch).toFixed(2)),
+                        yaw:   parseFloat((raw.yaw   - zeroPoint.yaw  ).toFixed(2)),
+                        roll:  parseFloat((raw.roll  - zeroPoint.roll ).toFixed(2)),
+                    });
+                    lastAngleSendTime = now;
+                }
+            }
+
+            // Render — no view/projection matrix → image is head-locked
             gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
             gl.clearColor(0, 0, 0, 1);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
             gl.useProgram(glProgram);
-
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, glTexture);
             gl.uniform1i(uTexLoc, 0);
-
             gl.bindBuffer(gl.ARRAY_BUFFER, glPosBuf);
             gl.enableVertexAttribArray(aPosLoc);
             gl.vertexAttribPointer(aPosLoc, 2, gl.FLOAT, false, 0, 0);
 
-            // Draw the same image for every view (each eye)
-            // No view/projection matrix applied → image is glued to the eyes
             for (const view of pose.views) {
                 const vp = layer.getViewport(view);
                 gl.viewport(vp.x, vp.y, vp.width, vp.height);
@@ -457,7 +609,7 @@ async function enterVR() {
 }
 
 // ── UI helpers ────────────────────────────────────────────────────────────────
-function showToast(msg, type = 'info') {
+function showToast(msg, type = '') {
     const t = document.createElement('div');
     t.className = `toast ${type}`;
     t.textContent = msg;
@@ -479,13 +631,35 @@ function toggleFullscreen() {
 connectBtn.addEventListener('click', connect);
 disconnBtn.addEventListener('click', disconnect);
 document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreen);
+
 vrBtn.addEventListener('click', () => {
     if (xrSession) xrSession.end();
     else enterVR();
 });
 
+takeControlBtn.addEventListener('click', () => {
+    takeControlBtn.disabled = true;
+    send({ type: 'take_control' });
+    setTimeout(() => { takeControlBtn.disabled = false; }, 2000);
+});
+
+releaseControlBtn.addEventListener('click', () => {
+    send({ type: 'release_control' });
+});
+
+calibrateBtn.addEventListener('click', () => {
+    if (xrSession) {
+        calibratePending = true;
+        showToast('Look straight ahead — calibrating…');
+    } else {
+        zeroPoint = { pitch: 0, yaw: 0, roll: 0 };
+        showToast('Zero point reset', 'success');
+    }
+});
+
 document.addEventListener('keydown', (e) => {
     if (e.key === 'f') toggleFullscreen();
+    if (e.key === 'c' && myRole === 'controller') calibrateBtn.click();
 });
 
 // ── WebXR availability ────────────────────────────────────────────────────────

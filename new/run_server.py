@@ -43,8 +43,17 @@ config = VRStreamerConfig(
     # Generate once on RPi:
     #   openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=raspberrypi.local"
     # Then accept the cert warning once in Oculus browser at https://<RPi-IP>:8000
-    ssl_certfile="/home/pi/certs/cert.pem",  # None
-    ssl_keyfile="/home/pi/certs/key.pem", # None
+    ssl_certfile="/home/pi/certs/cert.pem",
+    ssl_keyfile="/home/pi/certs/key.pem",
+
+    # Servo control — set servo_enabled=True when servos are wired to GPIO
+    servo_enabled=False,
+    servo_pan_pin=17,   # GPIO BCM: pan  = yaw
+    servo_tilt_pin=27,  # GPIO BCM: tilt = pitch
+    servo_roll_pin=22,  # GPIO BCM: roll
+    servo_step=0.25,          # Quantization step in degrees
+    angle_send_hz=20.0,       # Head angle update rate from Oculus (Hz)
+    send_servo_position=True,  # Include servo angles in each frame message
 
     show_stats=True,
     stats_interval=5.0,

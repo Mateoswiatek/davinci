@@ -83,6 +83,9 @@ class WebSocketStreamer(StreamingProtocol):
         self._site: Optional[web.TCPSite] = None
         self._clients: Set[web.WebSocketResponse] = set()
         self._lock = asyncio.Lock()
+        self.connect_handler = None     # async (ws_id: str, ws) → None
+        self.disconnect_handler = None  # async (ws_id: str) → None
+        self.message_handler = None     # async (ws_id: str, data: dict) → None
 
     async def start(self) -> bool:
         """Start the WebSocket server."""
@@ -168,6 +171,7 @@ class WebSocketStreamer(StreamingProtocol):
         )
         await ws.prepare(request)
 
+        ws_id = str(id(ws))
         client_ip = request.remote
         logger.info(f"WebSocket client connected: {client_ip}")
 
@@ -176,6 +180,9 @@ class WebSocketStreamer(StreamingProtocol):
             self.stats.clients_connected = len(self._clients)
 
         self._trigger_callbacks('on_client_connect', client_ip)
+
+        if self.connect_handler:
+            await self.connect_handler(ws_id, ws)
 
         try:
             async for msg in ws:
@@ -198,6 +205,9 @@ class WebSocketStreamer(StreamingProtocol):
             if str(e):  # Only log if there's an actual error message
                 logger.error(f"WebSocket handler error: {e}")
         finally:
+            if self.disconnect_handler:
+                await self.disconnect_handler(ws_id)
+
             async with self._lock:
                 self._clients.discard(ws)
                 self.stats.clients_connected = len(self._clients)
@@ -226,6 +236,9 @@ class WebSocketStreamer(StreamingProtocol):
                     'clients': stats.clients_connected
                 }
             })
+
+        elif self.message_handler:
+            await self.message_handler(str(id(ws)), data)
 
     async def _mjpeg_handler(self, request: web.Request) -> web.StreamResponse:
         """Handle MJPEG stream requests."""
@@ -512,6 +525,16 @@ class WebSocketStreamer(StreamingProtocol):
     @property
     def client_count(self) -> int:
         return len(self._clients)
+
+    async def send_to_ws(self, ws, message: Dict[str, Any]) -> bool:
+        """Send a message to one specific WebSocket client."""
+        if isinstance(ws, web.WebSocketResponse) and not ws.closed:
+            try:
+                await ws.send_json(message)
+                return True
+            except Exception as e:
+                logger.error(f"send_to_ws error: {e}")
+        return False
 
     async def send_message(self, message: Dict[str, Any]):
         """Send a custom message to all clients."""

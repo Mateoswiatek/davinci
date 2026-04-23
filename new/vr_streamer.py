@@ -31,6 +31,12 @@ from protocols.udp_streamer import UDPConfig
 from protocols.websocket_streamer import WebSocketConfig
 from protocols.base import CompressionFormat
 
+try:
+    from servo_manager import ServoConfig, ServoManager, ConnectionManager
+    SERVO_AVAILABLE = True
+except ImportError:
+    SERVO_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,8 +67,17 @@ class VRStreamerConfig:
     web_dir: Optional[str] = None
 
     # SSL — set both to enable HTTPS/WSS (required for WebXR on Oculus)
-    ssl_certfile: Optional[str] = None  # e.g. "/home/pi/certs/cert.pem"
-    ssl_keyfile: Optional[str] = None   # e.g. "/home/pi/certs/key.pem"
+    ssl_certfile: Optional[str] = None
+    ssl_keyfile: Optional[str] = None
+
+    # Servo control
+    servo_enabled: bool = False
+    servo_pan_pin: int = 14
+    servo_tilt_pin: int = 15
+    servo_roll_pin: int = 18
+    servo_step: float = 0.25        # Quantization step in degrees
+    angle_send_hz: float = 20.0     # Head angle update rate from client
+    send_servo_position: bool = True  # Broadcast servo position in frame metadata
 
     # Debug
     show_stats: bool = True
@@ -83,6 +98,7 @@ class VRStreamer:
         self._running = False
         self.camera: Optional[CameraCapture] = None
         self.streamer: Optional[MultiProtocolStreamer] = None
+        self._ws_streamer: Optional[WebSocketStreamer] = None
         self._stats_task: Optional[asyncio.Task] = None
         self._stats = {
             'frames_captured': 0,
@@ -92,6 +108,9 @@ class VRStreamer:
             'avg_total_ms': 0.0,
             'clients': 0,
         }
+        self.servo_manager: Optional[ServoManager] = None
+        self.connection_manager: Optional[ConnectionManager] = None
+        self._ws_map: Dict[str, Any] = {}  # ws_id → WebSocketResponse
 
     async def initialize(self) -> bool:
         logging.basicConfig(
@@ -125,8 +144,31 @@ class VRStreamer:
                 ssl_keyfile=self.config.ssl_keyfile,
             )
             ws_streamer = WebSocketStreamer(ws_config)
+
+            if self.config.servo_enabled:
+                if not SERVO_AVAILABLE:
+                    logger.error("servo_enabled=True but servo_manager.py not found")
+                    return False
+                servo_cfg = ServoConfig(
+                    pan_pin=self.config.servo_pan_pin,
+                    tilt_pin=self.config.servo_tilt_pin,
+                    roll_pin=self.config.servo_roll_pin,
+                    step=self.config.servo_step,
+                )
+                self.servo_manager = ServoManager(servo_cfg)
+                self.servo_manager.initialize()
+                self.connection_manager = ConnectionManager()
+                ws_streamer.connect_handler = self._on_ws_connect
+                ws_streamer.disconnect_handler = self._on_ws_disconnect
+                ws_streamer.message_handler = self._on_ws_message
+                logger.info(
+                    f"Servo control enabled — step={self.config.servo_step}°, "
+                    f"angle_hz={self.config.angle_send_hz}"
+                )
+
             if await ws_streamer.start():
                 self.streamer.add_protocol("websocket", ws_streamer)
+                self._ws_streamer = ws_streamer
                 logger.info(f"WebSocket: ws://{self.config.host}:{self.config.port}")
             else:
                 logger.error("Failed to start WebSocket server")
@@ -185,11 +227,16 @@ class VRStreamer:
 
                 self._stats['frames_captured'] += 1
 
+                metadata = None
+                if self.servo_manager and self.config.send_servo_position:
+                    metadata = {'servo': self.servo_manager.get_angles()}
+
                 stream_start = time.perf_counter()
                 await self.streamer.broadcast_to_all(
                     frame.data,
                     frame_id=frame.frame_id,
                     timestamp=time.time(),
+                    metadata=metadata,
                 )
                 stream_ms = (time.perf_counter() - stream_start) * 1000
 
@@ -241,10 +288,80 @@ class VRStreamer:
         if self.streamer:
             await self.streamer.stop_all()
 
+        if self.servo_manager:
+            self.servo_manager.close()
+
         if self.camera:
             self.camera.close()
 
         logger.info("Stopped")
+
+    # ── Servo / role event handlers ───────────────────────────────────────────
+
+    async def _on_ws_connect(self, ws_id: str, ws):
+        self._ws_map[ws_id] = ws
+        if not self.connection_manager or not self._ws_streamer:
+            return
+        role = await self.connection_manager.on_connect(ws_id)
+        msg = {
+            'type': 'role',
+            'role': role,
+            'controller_available': (
+                role == 'observer' and self.connection_manager.controller_available()
+            ),
+            'angle_send_hz': self.config.angle_send_hz,
+            'servo_step': self.config.servo_step,
+        }
+        if self.servo_manager and self.config.send_servo_position:
+            msg['servo_position'] = self.servo_manager.get_angles()
+        await self._ws_streamer.send_to_ws(ws, msg)
+
+    async def _on_ws_disconnect(self, ws_id: str):
+        self._ws_map.pop(ws_id, None)
+        if not self.connection_manager or not self._ws_streamer:
+            return
+        was_controller = await self.connection_manager.on_disconnect(ws_id)
+        if was_controller:
+            await self._ws_streamer.send_message({
+                'type': 'role_update',
+                'controller_available': True,
+            })
+
+    async def _on_ws_message(self, ws_id: str, data: dict):
+        msg_type = data.get('type')
+
+        if msg_type == 'head_angles' and self.servo_manager:
+            if self.connection_manager and self.connection_manager.is_controller(ws_id):
+                self.servo_manager.move(
+                    pitch=data.get('pitch'),
+                    yaw=data.get('yaw'),
+                    roll=data.get('roll'),
+                )
+
+        elif msg_type == 'take_control' and self.connection_manager:
+            success = await self.connection_manager.request_control(ws_id)
+            ws = self._ws_map.get(ws_id)
+            if ws and self._ws_streamer:
+                await self._ws_streamer.send_to_ws(ws, {
+                    'type': 'control_result',
+                    'success': success,
+                    'role': self.connection_manager.get_role(ws_id),
+                })
+
+        elif msg_type == 'release_control' and self.connection_manager:
+            await self.connection_manager.release_control(ws_id)
+            ws = self._ws_map.get(ws_id)
+            if ws and self._ws_streamer:
+                await self._ws_streamer.send_to_ws(ws, {
+                    'type': 'control_result',
+                    'success': True,
+                    'role': 'observer',
+                })
+            if self._ws_streamer:
+                await self._ws_streamer.send_message({
+                    'type': 'role_update',
+                    'controller_available': True,
+                })
 
     def get_stats(self) -> Dict[str, Any]:
         return self._stats.copy()
