@@ -48,12 +48,21 @@ config = VRStreamerConfig(
 
     # Servo control — set servo_enabled=True when servos are wired to GPIO
     servo_enabled=True,
-    servo_pan_pin=16,   # GPIO BCM: pan  = yaw
-    servo_tilt_pin=20,  # GPIO BCM: tilt = pitch
-    servo_roll_pin=21,  # GPIO BCM: roll
+    # Hardware PWM → brak drgań, przepnij przewody na fizyczne piny 32, 33, 12:
+    servo_pan_pin=12,    # GPIO 12 = physical pin 32  (PWM hardware)
+    servo_tilt_pin=13,   # GPIO 13 = physical pin 33  (PWM hardware)
+    servo_roll_pin=18,   # GPIO 18 = physical pin 12  (PWM hardware)
+    # Software PWM → aktualne okablowanie (piny 36, 38, 40):
+    # servo_pan_pin=16,
+    # servo_tilt_pin=20,
+    # servo_roll_pin=21,
     servo_step=0.25,          # Quantization step in degrees
     angle_send_hz=20.0,       # Head angle update rate from Oculus (Hz)
     send_servo_position=True,  # Include servo angles in each frame message
+    # Pozycja startowa (°) — ustaw tak, żeby głowa była prosto przy kącie 0
+    servo_initial_pan=0.0,
+    servo_initial_tilt=45.0,   # skalibrowane
+    servo_initial_roll=0.0,
 
     show_stats=True,
     stats_interval=5.0,

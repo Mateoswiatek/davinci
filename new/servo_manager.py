@@ -23,6 +23,12 @@ class ServoConfig:
 
     min_pulse_width: float = 0.0005   # 0.5 ms
     max_pulse_width: float = 0.0025   # 2.5 ms
+    deadband: float = 0.0             # min change (°) to actually move servo (SG90 ma własny dead zone)
+
+    # Initial position on startup (degrees, within min_angle..max_angle)
+    initial_pan: float = 0.0
+    initial_tilt: float = 0.0
+    initial_roll: float = 0.0
 
 
 class ServoManager:
@@ -44,7 +50,12 @@ class ServoManager:
 
     def initialize(self) -> bool:
         try:
-            from gpiozero import AngularServo
+            from gpiozero import AngularServo, Device
+
+            # RPi 5 uses RP1 GPIO chip — lgpio gives stable PWM (pigpio won't work)
+            # RPi 4 and earlier can use pigpio for best results
+            self._setup_pin_factory()
+
             kw = dict(
                 min_angle=self.config.min_angle,
                 max_angle=self.config.max_angle,
@@ -58,36 +69,76 @@ class ServoManager:
                 f"Servos on GPIO pan={self.config.pan_pin}, "
                 f"tilt={self.config.tilt_pin}, roll={self.config.roll_pin}"
             )
+            # Ustaw pozycję startową na wszystkich trzech od razu — wszystkie trzymają PWM
+            self._pan_angle  = self._q(self._c(self.config.initial_pan))
+            self._tilt_angle = self._q(self._c(self.config.initial_tilt))
+            self._roll_angle = self._q(self._c(self.config.initial_roll))
+            self._pan.angle  = self._pan_angle
+            self._tilt.angle = self._tilt_angle
+            self._roll.angle = self._roll_angle
+            logger.info(
+                f"Initial position: pan={self._pan_angle}°, "
+                f"tilt={self._tilt_angle}°, roll={self._roll_angle}°"
+            )
         except Exception as e:
-            logger.warning(f"gpiozero unavailable ({e}) — simulation mode")
+            import traceback
+            logger.warning(f"gpiozero unavailable — simulation mode")
+            logger.warning(f"  Error: {e}")
+            logger.warning(f"  Traceback:\n{traceback.format_exc()}")
             self._simulated = True
         return True
 
+    @staticmethod
+    def _setup_pin_factory():
+        """Set the best available pin factory. lgpio preferred on RPi 5."""
+        from gpiozero import Device
+        try:
+            from gpiozero.pins.lgpio import LGPIOFactory
+            Device.pin_factory = LGPIOFactory()
+            logger.info("Pin factory: lgpio (stable PWM)")
+            return
+        except Exception as e:
+            logger.debug(f"lgpio not available: {e}")
+        try:
+            from gpiozero.pins.pigpio import PiGPIOFactory
+            Device.pin_factory = PiGPIOFactory()
+            logger.info("Pin factory: pigpio (stable PWM)")
+            return
+        except Exception as e:
+            logger.debug(f"pigpio not available: {e}")
+        logger.warning("Pin factory: software PWM fallback — servo may jitter")
+
     def move(self, pitch: Optional[float], yaw: Optional[float], roll: Optional[float]):
-        """Move servos to absolute target angles. None = hold current position."""
+        """Move servos to absolute target angles (relative to initial/neutral position). None = hold current position."""
         if pitch is not None:
-            self._tilt_angle = self._q(self._c(pitch))
-            if self._tilt:
-                try:
-                    self._tilt.angle = self._tilt_angle
-                except Exception as e:
-                    logger.error(f"gpiozero tilt error: {e}")
+            new = self._q(self._c(pitch + self.config.initial_tilt))
+            if abs(new - self._tilt_angle) > self.config.deadband:
+                self._tilt_angle = new
+                if self._tilt:
+                    try:
+                        self._tilt.angle = self._tilt_angle
+                    except Exception as e:
+                        logger.error(f"gpiozero tilt error: {e}")
 
         if yaw is not None:
-            self._pan_angle = self._q(self._c(yaw))
-            if self._pan:
-                try:
-                    self._pan.angle = self._pan_angle
-                except Exception as e:
-                    logger.error(f"gpiozero pan error: {e}")
+            new = self._q(self._c(yaw + self.config.initial_pan))
+            if abs(new - self._pan_angle) > self.config.deadband:
+                self._pan_angle = new
+                if self._pan:
+                    try:
+                        self._pan.angle = self._pan_angle
+                    except Exception as e:
+                        logger.error(f"gpiozero pan error: {e}")
 
         if roll is not None:
-            self._roll_angle = self._q(self._c(roll))
-            if self._roll:
-                try:
-                    self._roll.angle = self._roll_angle
-                except Exception as e:
-                    logger.error(f"gpiozero roll error: {e}")
+            new = self._q(self._c(roll + self.config.initial_roll))
+            if abs(new - self._roll_angle) > self.config.deadband:
+                self._roll_angle = new
+                if self._roll:
+                    try:
+                        self._roll.angle = self._roll_angle
+                    except Exception as e:
+                        logger.error(f"gpiozero roll error: {e}")
 
         now = time.monotonic()
         if now - self._last_log >= 1.0:

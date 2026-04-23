@@ -78,6 +78,9 @@ class VRStreamerConfig:
     servo_step: float = 0.25        # Quantization step in degrees
     angle_send_hz: float = 20.0     # Head angle update rate from client
     send_servo_position: bool = True  # Broadcast servo position in frame metadata
+    servo_initial_pan: float = 0.0   # Startup position in degrees
+    servo_initial_tilt: float = 0.0
+    servo_initial_roll: float = 0.0
 
     # Debug
     show_stats: bool = True
@@ -156,6 +159,9 @@ class VRStreamer:
                     tilt_pin=self.config.servo_tilt_pin,
                     roll_pin=self.config.servo_roll_pin,
                     step=self.config.servo_step,
+                    initial_pan=self.config.servo_initial_pan,
+                    initial_tilt=self.config.servo_initial_tilt,
+                    initial_roll=self.config.servo_initial_roll,
                 )
                 self.servo_manager = ServoManager(servo_cfg)
                 self.servo_manager.initialize()
