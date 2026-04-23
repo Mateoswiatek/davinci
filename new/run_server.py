@@ -27,8 +27,8 @@ logging.basicConfig(
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 config = VRStreamerConfig(
-    camera_width=1280,
-    camera_height=720,
+    camera_width=1280, # 720, #1280,
+    camera_height=720, # 480, # 720,
     camera_fps=30,
     camera_profile=CameraProfile.LOW_LATENCY,
 
@@ -47,10 +47,10 @@ config = VRStreamerConfig(
     ssl_keyfile="/home/pi/certs/key.pem",
 
     # Servo control — set servo_enabled=True when servos are wired to GPIO
-    servo_enabled=False,
-    servo_pan_pin=17,   # GPIO BCM: pan  = yaw
-    servo_tilt_pin=27,  # GPIO BCM: tilt = pitch
-    servo_roll_pin=22,  # GPIO BCM: roll
+    servo_enabled=True,
+    servo_pan_pin=16,   # GPIO BCM: pan  = yaw
+    servo_tilt_pin=20,  # GPIO BCM: tilt = pitch
+    servo_roll_pin=21,  # GPIO BCM: roll
     servo_step=0.25,          # Quantization step in degrees
     angle_send_hz=20.0,       # Head angle update rate from Oculus (Hz)
     send_servo_position=True,  # Include servo angles in each frame message

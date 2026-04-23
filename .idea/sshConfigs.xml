@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="SshConfigs">
+    <configs>
+      <sshConfig authType="PASSWORD" connectionConfig="{&quot;serverAliveInterval&quot;:300}" host="192.168.1.123" id="163c13b6-3647-41b7-9014-9050fd31c0c8" port="22" customName="RasbperryPi Local wire" nameFormat="CUSTOM" username="pi" useOpenSSHConfig="true">
+        <option name="customName" value="RasbperryPi Local wire" />
+      </sshConfig>
+    </configs>
+  </component>
+</project>

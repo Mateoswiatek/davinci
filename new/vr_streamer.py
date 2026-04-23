@@ -107,10 +107,12 @@ class VRStreamer:
             'avg_stream_ms': 0.0,
             'avg_total_ms': 0.0,
             'clients': 0,
+            'angles_received': 0,
         }
         self.servo_manager: Optional[ServoManager] = None
         self.connection_manager: Optional[ConnectionManager] = None
         self._ws_map: Dict[str, Any] = {}  # ws_id → WebSocketResponse
+        self._first_angle_logged = False
 
     async def initialize(self) -> bool:
         logging.basicConfig(
@@ -267,11 +269,14 @@ class VRStreamer:
                 break
             s = self._stats
             fps = s['frames_captured'] / self.config.stats_interval
+            angles = s['angles_received']
             self._stats['frames_captured'] = 0
+            self._stats['angles_received'] = 0
+            servo_part = f" | Angles/s: {angles / self.config.stats_interval:.1f}" if self.config.servo_enabled else ""
             logger.info(
                 f"FPS: {fps:.1f} | Capture: {s['avg_capture_ms']:.1f}ms | "
                 f"Stream: {s['avg_stream_ms']:.1f}ms | Total: {s['avg_total_ms']:.1f}ms | "
-                f"Clients: {s['clients']}"
+                f"Clients: {s['clients']}{servo_part}"
             )
 
     async def stop(self):
@@ -329,14 +334,26 @@ class VRStreamer:
 
     async def _on_ws_message(self, ws_id: str, data: dict):
         msg_type = data.get('type')
+        logger.debug(f"WS msg from {ws_id[:8]}: type={msg_type}")
 
-        if msg_type == 'head_angles' and self.servo_manager:
-            if self.connection_manager and self.connection_manager.is_controller(ws_id):
-                self.servo_manager.move(
-                    pitch=data.get('pitch'),
-                    yaw=data.get('yaw'),
-                    roll=data.get('roll'),
-                )
+        if msg_type == 'head_angles':
+            if not self.servo_manager:
+                logger.warning("head_angles received but servo_manager is None (servo_enabled=False?)")
+                return
+            if not (self.connection_manager and self.connection_manager.is_controller(ws_id)):
+                logger.debug(f"head_angles ignored — sender {ws_id[:8]} is not controller")
+                return
+
+            pitch = data.get('pitch')
+            yaw   = data.get('yaw')
+            roll  = data.get('roll')
+
+            if not self._first_angle_logged:
+                logger.info(f"First head_angles received: pitch={pitch} yaw={yaw} roll={roll}")
+                self._first_angle_logged = True
+
+            self._stats['angles_received'] += 1
+            self.servo_manager.move(pitch=pitch, yaw=yaw, roll=roll)
 
         elif msg_type == 'take_control' and self.connection_manager:
             success = await self.connection_manager.request_control(ws_id)

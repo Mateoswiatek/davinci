@@ -223,6 +223,23 @@
                 <span class="stats-label">Pan/Tilt/Roll:</span>
                 <span class="stats-value" id="servoValue">—</span>
             </div>
+            <!-- Keyboard sim panel — visible when controller -->
+            <div id="kbSimPanel" style="display:none; margin-top:8px; border-top:1px solid #444; padding-top:8px;">
+                <div style="color:#7c3aed; font-weight:bold; margin-bottom:6px; font-size:0.8rem;">⌨ Keyboard Sim</div>
+                <div class="stats-row">
+                    <span class="stats-label">Pan  ←→:</span>
+                    <span class="stats-value" id="kbYaw">0.0°</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Tilt ↑↓:</span>
+                    <span class="stats-value" id="kbPitch">0.0°</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Roll Q/E:</span>
+                    <span class="stats-value" id="kbRoll">0.0°</span>
+                </div>
+                <div style="color:#555; font-size:0.75rem; margin-top:4px;">R = reset do zera</div>
+            </div>
         </div>
     </div>
 </div>
@@ -245,6 +262,10 @@ let angleInterval = 50;   // ms between angle sends (default 20 Hz)
 let zeroPoint = { pitch: 0, yaw: 0, roll: 0 };
 let calibratePending = false;
 let lastAngleSendTime = 0;
+
+// Keyboard angle simulation
+const KB_STEP = 2.0;  // degrees per keypress
+let simPitch = 0, simYaw = 0, simRoll = 0;
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
 const video            = document.getElementById('video');
@@ -395,21 +416,29 @@ function handleFrame(data) {
 
 // ── Role UI ───────────────────────────────────────────────────────────────────
 function updateRoleUI() {
+    const isCtrl = myRole === 'controller';
     if (myRole) {
         servoGroup.style.display = 'flex';
         roleBadge.style.display = 'inline-block';
-        roleBadge.textContent = myRole === 'controller' ? 'Controller' : 'Observer';
-        roleBadge.className = 'role-badge ' + (myRole === 'controller' ? 'controller' : 'observer');
+        roleBadge.textContent = isCtrl ? 'Controller' : 'Observer';
+        roleBadge.className = 'role-badge ' + (isCtrl ? 'controller' : 'observer');
     } else {
         servoGroup.style.display = 'none';
         roleBadge.style.display = 'none';
     }
     takeControlBtn.style.display =
         (myRole === 'observer' && controllerAvailable) ? 'inline-block' : 'none';
-    releaseControlBtn.style.display =
-        (myRole === 'controller') ? 'inline-block' : 'none';
-    calibrateBtn.style.display =
-        (myRole === 'controller') ? 'inline-block' : 'none';
+    releaseControlBtn.style.display = isCtrl ? 'inline-block' : 'none';
+    calibrateBtn.style.display     = isCtrl ? 'inline-block' : 'none';
+
+    // Keyboard sim panel — show when controller (works outside VR)
+    document.getElementById('kbSimPanel').style.display = isCtrl ? 'block' : 'none';
+}
+
+function updateKbSimDisplay() {
+    document.getElementById('kbYaw').textContent   = simYaw.toFixed(1)   + '°';
+    document.getElementById('kbPitch').textContent = simPitch.toFixed(1) + '°';
+    document.getElementById('kbRoll').textContent  = simRoll.toFixed(1)  + '°';
 }
 
 function updateServoDisplay(servo) {
@@ -658,8 +687,41 @@ calibrateBtn.addEventListener('click', () => {
 });
 
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'f') toggleFullscreen();
-    if (e.key === 'c' && myRole === 'controller') calibrateBtn.click();
+    if (e.target.tagName === 'INPUT') return;   // nie przechwytuj gdy piszesz w polu
+
+    if (e.key === 'f') { toggleFullscreen(); return; }
+    if (e.key === 'c' && myRole === 'controller') { calibrateBtn.click(); return; }
+
+    // ── Keyboard angle simulation (controller, poza VR) ──────────────────────
+    if (myRole !== 'controller' || xrSession) return;
+
+    let moved = true;
+    switch (e.key) {
+        case 'ArrowLeft':  simYaw   -= KB_STEP; break;
+        case 'ArrowRight': simYaw   += KB_STEP; break;
+        case 'ArrowUp':    simPitch += KB_STEP; break;
+        case 'ArrowDown':  simPitch -= KB_STEP; break;
+        case 'q': case 'Q': simRoll -= KB_STEP; break;
+        case 'e': case 'E': simRoll += KB_STEP; break;
+        case 'r': case 'R':
+            simPitch = 0; simYaw = 0; simRoll = 0;
+            break;
+        default: moved = false;
+    }
+
+    if (moved) {
+        e.preventDefault();  // zablokuj scrollowanie strzałkami
+        simPitch = Math.max(-90, Math.min(90, simPitch));
+        simYaw   = Math.max(-90, Math.min(90, simYaw));
+        simRoll  = Math.max(-90, Math.min(90, simRoll));
+        updateKbSimDisplay();
+        send({
+            type:  'head_angles',
+            pitch: parseFloat(simPitch.toFixed(2)),
+            yaw:   parseFloat(simYaw.toFixed(2)),
+            roll:  parseFloat(simRoll.toFixed(2)),
+        });
+    }
 });
 
 // ── WebXR availability ────────────────────────────────────────────────────────

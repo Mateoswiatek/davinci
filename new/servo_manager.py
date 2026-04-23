@@ -4,6 +4,7 @@ Servo Manager — pan/tilt/roll control for DaVinci VR remote head.
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Optional, Dict
 
@@ -39,6 +40,7 @@ class ServoManager:
         self._tilt = None
         self._roll = None
         self._simulated = False
+        self._last_log: float = 0.0
 
     def initialize(self) -> bool:
         try:
@@ -66,24 +68,36 @@ class ServoManager:
         if pitch is not None:
             self._tilt_angle = self._q(self._c(pitch))
             if self._tilt:
-                self._tilt.angle = self._tilt_angle
+                try:
+                    self._tilt.angle = self._tilt_angle
+                except Exception as e:
+                    logger.error(f"gpiozero tilt error: {e}")
 
         if yaw is not None:
             self._pan_angle = self._q(self._c(yaw))
             if self._pan:
-                self._pan.angle = self._pan_angle
+                try:
+                    self._pan.angle = self._pan_angle
+                except Exception as e:
+                    logger.error(f"gpiozero pan error: {e}")
 
         if roll is not None:
             self._roll_angle = self._q(self._c(roll))
             if self._roll:
-                self._roll.angle = self._roll_angle
+                try:
+                    self._roll.angle = self._roll_angle
+                except Exception as e:
+                    logger.error(f"gpiozero roll error: {e}")
 
-        if self._simulated:
-            logger.debug(
-                f"[SIM] pan={self._pan_angle:.2f}° "
+        now = time.monotonic()
+        if now - self._last_log >= 1.0:
+            prefix = "[SIM]" if self._simulated else "[HW]"
+            logger.info(
+                f"{prefix} pan={self._pan_angle:.2f}° "
                 f"tilt={self._tilt_angle:.2f}° "
                 f"roll={self._roll_angle:.2f}°"
             )
+            self._last_log = now
 
     def get_angles(self) -> Dict[str, float]:
         return {
